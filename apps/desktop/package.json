@@ -1,0 +1,43 @@
+{
+  "name": "@relay/desktop",
+  "version": "0.1.1",
+  "private": true,
+  "description": "Relay — app nativo de desktop (Electron), aponta para a versão web do Relay.",
+  "author": "Relay Team",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "dependencies": {
+    "electron-store": "^8.2.0"
+  },
+  "devDependencies": {
+    "electron": "43.4.1",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.relay.app",
+    "productName": "Relay",
+    "electronVersion": "43.4.1",
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "files": [
+      "main.js",
+      "preload-main.js",
+      "preload-settings.js",
+      "src/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../client/build/web",
+        "to": "web"
+      }
+    ]
+  }
+}

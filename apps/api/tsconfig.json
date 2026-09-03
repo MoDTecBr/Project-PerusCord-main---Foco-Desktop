@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "declaration": false,
+    "outDir": "./dist",
+    "baseUrl": "./",
+    "paths": {
+      "@relay/permissions": ["../../packages/permissions/src"],
+      "@relay/shared-types": ["../../packages/shared-types/src"]
+    }
+  }
+}

@@ -1,0 +1,32 @@
+# Config do LiveKit para dev local (Docker Desktop no Windows/Mac).
+# Chave/segredo fixos ("devkey"/"secret") — NUNCA usar isso em produção.
+port: 7880
+
+rtc:
+  tcp_port: 7881
+  port_range_start: 51000
+  port_range_end: 51100
+  use_external_ip: false
+  # Docker Desktop roda os containers dentro de uma VM — sem isso, o LiveKit
+  # anunciaria o IP interno do container nos candidatos ICE, que ninguém de
+  # fora consegue alcançar. Tem que ser um IP onde o host desta máquina é
+  # alcançável por quem vai entrar na chamada — aqui, o IP do Radmin VPN.
+  node_ip: 100.110.193.120
+
+# Detecção de "quem está falando" (aro verde no cliente) — o padrão do
+# LiveKit exige falar bem mais alto/por mais tempo do que a gente quer aqui.
+# `active_level` mais alto deixa vozes mais baixas contarem como "falando";
+# `min_percentile` mais baixo exige menos tempo sustentado acima desse nível;
+# `smooth_intervals` mais baixo reage mais rápido (com um pouco mais de
+# tremulação). Referência: pkg/sfu/audio/audiolevel.go no repo do LiveKit.
+audio:
+  active_level: 50 # padrão: 35 (0=mais alto, 127=mais baixo — maior = mais sensível)
+  min_percentile: 20 # padrão: 40
+  update_interval: 300 # padrão: 400 (ms)
+  smooth_intervals: 1 # padrão: 2
+
+keys:
+  # Placeholder — troque por um segredo real (32+ caracteres, ex: gere com
+  # `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`)
+  # e use o MESMO valor em LIVEKIT_API_SECRET no seu .env antes de rodar.
+  devkey: cfab31ff46896a8d6855e1738e1e5044dbaa2f516529c20d96df13898e0ec018

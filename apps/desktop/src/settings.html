@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Configurações do Relay</title>
+  <style>
+    :root {
+      --bg: #12151a; --surface: #181c22; --border: #2a3038;
+      --ink: #edf0ee; --ink-faint: #767f88; --accent: #ff7a4d; --accent-ink: #171008;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--ink);
+      font-family: -apple-system, 'Segoe UI', Roboto, sans-serif;
+      padding: 24px;
+    }
+    h1 { font-size: 16px; margin: 0 0 4px; }
+    p { color: var(--ink-faint); font-size: 12.5px; margin: 0 0 20px; }
+    label { display: block; font-size: 12px; color: var(--ink-faint); margin-bottom: 6px; }
+    input {
+      width: 100%; background: var(--surface); border: 1px solid var(--border);
+      color: var(--ink); padding: 10px 12px; border-radius: 8px; font-size: 13.5px;
+      margin-bottom: 16px;
+    }
+    input:focus { outline: none; border-color: var(--accent); }
+    button {
+      background: var(--accent); color: var(--accent-ink); border: none;
+      padding: 10px 16px; border-radius: 8px; font-weight: 600; font-size: 13px;
+      cursor: pointer; width: 100%;
+    }
+  </style>
+</head>
+<body>
+  <h1>Endereço do servidor</h1>
+  <p>O IP do Radmin VPN pode mudar — atualize aqui se o app parar de conectar.</p>
+  <label for="url">URL do Relay</label>
+  <input id="url" type="text" placeholder="http://26.10.55.236:8080" />
+  <button id="save">Salvar e reconectar</button>
+
+  <script>
+    const input = document.getElementById('url');
+    const button = document.getElementById('save');
+
+    window.relayDesktop.getServerUrl().then((url) => { input.value = url; });
+
+    button.addEventListener('click', async () => {
+      const value = input.value.trim();
+      if (!value) return;
+      await window.relayDesktop.saveServerUrl(value);
+    });
+
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') button.click();
+    });
+  </script>
+</body>
+</html>

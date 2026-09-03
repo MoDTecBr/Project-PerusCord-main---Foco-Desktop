@@ -1,0 +1,43 @@
+name: relay_client
+description: Relay — cliente nativo (Android, iOS, Windows, macOS) de comunicação em tempo real.
+publish_to: "none"
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Estado e navegação
+  flutter_riverpod: ^2.5.1
+  go_router: ^14.2.7
+
+  # Rede e realtime
+  dio: ^5.7.0
+  socket_io_client: ^2.0.3+1
+
+  # Armazenamento seguro do refresh token (Keychain/Keystore/DPAPI conforme a plataforma)
+  flutter_secure_storage: ^11.0.0
+
+  # Voz/vídeo/tela (Fase 5) — WebRTC via LiveKit
+  livekit_client: ^2.3.5
+  # Volume por participante (Helper.setVolume) — já é dependência transitiva
+  # do livekit_client, declarada aqui direto por ser usada pelo app também.
+  flutter_webrtc: ^1.6.0
+
+  # Enviar imagens no chat
+  image_picker: ^1.1.2
+
+  cupertino_icons: ^1.0.8
+  launch_at_startup: ^0.0.1
+  package_info_plus: ^10.2.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true

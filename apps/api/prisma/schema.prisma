@@ -1,0 +1,329 @@
+// Schema núcleo do Relay.
+// Fase 2 (Backend Core): identidade, servidores/comunidades, cargos/
+// permissões, categorias, canais, convites e auditoria.
+// Fase 3 (Realtime & Presença): mensagens, canais de DM e amizades.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ChannelType {
+  TEXT
+  VOICE
+  VIDEO
+  /// Canal de mensagem direta entre dois usuários — não pertence a nenhum servidor.
+  DM
+}
+
+enum FriendshipStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  BLOCKED
+}
+
+enum PresenceStatus {
+  ONLINE
+  IDLE
+  DO_NOT_DISTURB
+  OFFLINE
+}
+
+enum OverwriteTargetType {
+  ROLE
+  MEMBER
+}
+
+enum AuditLogAction {
+  MEMBER_KICK
+  MEMBER_BAN
+  MEMBER_ROLE_UPDATE
+  ROLE_CREATE
+  ROLE_UPDATE
+  ROLE_DELETE
+  CHANNEL_CREATE
+  CHANNEL_UPDATE
+  CHANNEL_DELETE
+  CATEGORY_CREATE
+  CATEGORY_UPDATE
+  CATEGORY_DELETE
+  INVITE_CREATE
+  INVITE_DELETE
+  SERVER_UPDATE
+}
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  username     String    @unique
+  displayName  String
+  passwordHash String
+  avatarUrl    String?
+  status       PresenceStatus @default(OFFLINE)
+
+  mfaEnabled    Boolean  @default(false)
+  mfaSecret     String?  // criptografado em repouso pela aplicação, nunca em texto puro
+  mfaBackupCodes String[] @default([]) // hashes (argon2id) dos códigos de backup, um-uso-só
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sessions      Session[]
+  memberships   Member[]
+  ownedServers  Server[]        @relation("ServerOwner")
+  createdInvites Invite[]
+  auditLogs     AuditLog[]
+  messages      Message[]
+  dmChannels    DMParticipant[]
+  friendshipsSent     Friendship[] @relation("FriendshipRequester")
+  friendshipsReceived Friendship[] @relation("FriendshipAddressee")
+
+  @@index([username])
+}
+
+/// Pedido/relação de amizade. Uma linha cobre os dois sentidos: para saber se
+/// A e B são amigos, é preciso checar (requester=A,addressee=B) OU o inverso —
+/// a camada de serviço sempre consulta ambos.
+model Friendship {
+  id           String           @id @default(cuid())
+  requesterId  String
+  requester    User             @relation("FriendshipRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  addresseeId  String
+  addressee    User             @relation("FriendshipAddressee", fields: [addresseeId], references: [id], onDelete: Cascade)
+
+  status       FriendshipStatus @default(PENDING)
+
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  @@unique([requesterId, addresseeId])
+  @@index([addresseeId])
+}
+
+/// Um refresh token ativo = uma sessão de dispositivo. Rotativo: a cada uso,
+/// esta linha é marcada como revogada e uma nova é criada apontando para ela.
+model Session {
+  id                String    @id @default(cuid())
+  userId            String
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  refreshTokenHash  String    // hash (SHA-256) do refresh token opaco — nunca o valor puro
+  userAgent         String?
+  ipAddress         String?
+
+  createdAt         DateTime  @default(now())
+  expiresAt         DateTime
+  revokedAt         DateTime?
+  replacedBySessionId String?
+
+  @@index([userId])
+  @@index([refreshTokenHash])
+}
+
+model Server {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  iconUrl     String?
+
+  ownerId     String
+  owner       User     @relation("ServerOwner", fields: [ownerId], references: [id])
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members    Member[]
+  roles      Role[]
+  categories Category[]
+  channels   Channel[]
+  invites    Invite[]
+  auditLogs  AuditLog[]
+
+  @@index([ownerId])
+}
+
+model Member {
+  id       String   @id @default(cuid())
+  serverId String
+  server   Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  nickname String?
+  joinedAt DateTime @default(now())
+
+  roles MemberRole[]
+  permissionOverwrites PermissionOverwrite[]
+
+  @@unique([serverId, userId])
+  @@index([userId])
+}
+
+/// Cargo do servidor. `permissions` é o bitfield definido em @relay/permissions.
+/// `position` define hierarquia: cargos de posição maior "vencem" em conflitos
+/// de cor/exibição e não podem ser geridos por cargos de posição menor.
+model Role {
+  id          String  @id @default(cuid())
+  serverId    String
+  server      Server  @relation(fields: [serverId], references: [id], onDelete: Cascade)
+
+  name        String
+  color       Int?
+  permissions BigInt
+  position    Int
+  isEveryone  Boolean @default(false)
+
+  createdAt   DateTime @default(now())
+
+  members MemberRole[]
+  channelOverwrites PermissionOverwrite[]
+
+  @@index([serverId])
+}
+
+model MemberRole {
+  memberId String
+  member   Member @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  roleId   String
+  role     Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([memberId, roleId])
+}
+
+model Category {
+  id       String @id @default(cuid())
+  serverId String
+  server   Server @relation(fields: [serverId], references: [id], onDelete: Cascade)
+
+  name     String
+  position Int
+
+  channels Channel[]
+  permissionOverwrites PermissionOverwrite[]
+
+  @@index([serverId])
+}
+
+model Channel {
+  id         String      @id @default(cuid())
+  /// Nulo para canais de DM — esses não pertencem a nenhum servidor.
+  serverId   String?
+  server     Server?     @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  categoryId String?
+  category   Category?   @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  name       String
+  type       ChannelType
+  topic      String?
+  /// Irrelevante para canais de DM (sempre 0) — só ordena canais de servidor.
+  position   Int         @default(0)
+
+  createdAt  DateTime    @default(now())
+
+  permissionOverwrites PermissionOverwrite[]
+  messages   Message[]
+  dmParticipants DMParticipant[]
+
+  @@index([serverId])
+  @@index([categoryId])
+}
+
+/// Participante de um canal de DM. Hoje sempre 2 linhas por canal (1:1) — o
+/// modelo já comporta DM em grupo no futuro sem migração.
+model DMParticipant {
+  channelId String
+  channel   Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([channelId, userId])
+  @@index([userId])
+}
+
+model Message {
+  id        String    @id @default(cuid())
+  channelId String
+  channel   Channel   @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User      @relation(fields: [authorId], references: [id])
+
+  content     String
+  /// Lista de anexos ({ url, filename, size, mimeType }) — upload real chega
+  /// com a integração de armazenamento de arquivos; por ora é só o metadado.
+  attachments Json?
+  replyToId   String?
+  replyTo     Message?  @relation("MessageReply", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies     Message[] @relation("MessageReply")
+
+  editedAt  DateTime?
+  deletedAt DateTime?
+
+  createdAt DateTime  @default(now())
+
+  @@index([channelId, createdAt])
+  @@index([authorId])
+}
+
+/// Overwrite de permissão em nível de canal OU categoria (exatamente um dos
+/// dois é preenchido), aplicado a um cargo OU a um membro específico
+/// (exatamente um dos dois é preenchido). Validado na camada de serviço.
+model PermissionOverwrite {
+  id         String              @id @default(cuid())
+  targetType OverwriteTargetType
+
+  channelId  String?
+  channel    Channel?  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  roleId     String?
+  role       Role?     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  memberId   String?
+  member     Member?   @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  allow      BigInt
+  deny       BigInt
+
+  @@index([channelId])
+  @@index([categoryId])
+}
+
+model Invite {
+  id          String    @id @default(cuid())
+  code        String    @unique
+  serverId    String
+  server      Server    @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  createdById String
+  createdBy   User      @relation(fields: [createdById], references: [id])
+
+  maxUses     Int?
+  uses        Int       @default(0)
+  expiresAt   DateTime?
+
+  createdAt   DateTime  @default(now())
+
+  @@index([serverId])
+}
+
+model AuditLog {
+  id        String         @id @default(cuid())
+  serverId  String
+  server    Server         @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  actorId   String
+  actor     User           @relation(fields: [actorId], references: [id])
+
+  action    AuditLogAction
+  targetId  String?
+  reason    String?
+  metadata  Json?
+
+  createdAt DateTime       @default(now())
+
+  @@index([serverId])
+  @@index([actorId])
+}
