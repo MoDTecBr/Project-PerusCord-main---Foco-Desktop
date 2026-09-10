@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 3,
+  "packageId": "relay_client",
+  "appName": "Relay Client",
+  "version": "0.1.4",
+  "buildNumber": 5,
+  "platform": "windows",
+  "channel": "stable",
+  "artifact": {
+    "kind": "innoInstaller",
+    "url": "http://191.183.194.228:3000/releases/releases/0.1.4/windows/RelaySetup.exe",
+    "sha256": "f09d4983f5026f4b53198f12fa5b8152eae6d19b91de113b742893d7aad81fc0",
+    "length": 17969813
+  },
+  "install": {
+    "strategy": "innoInstaller",
+    "inno": {
+      "silentArgs": [
+        "/VERYSILENT",
+        "/SUPPRESSMSGBOXES",
+        "/NORESTART"
+      ],
+      "inheritInstallDirectory": true,
+      "logFileName": "desktop_updater_inno_install.log",
+      "relaunchAfterInstall": true,
+      "requiresElevation": "auto",
+      "authenticode": {
+        "required": false
+      }
+    }
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "publicKeyId": "release-8498a354bb36c982fc25cafd",
+    "value": "zruznFWvovISoPlWoYF/vN73a1G8uX9S1GmSWoNhucW1gdljWIDi+JMvPVcXcxwCXI7vjjHNWU1I4PsigSo7Cw=="
+  },
+  "minimumUpdaterVersion": "2.5.0",
+  "generatedAt": "2026-09-07T00:08:01.337119Z"
+}

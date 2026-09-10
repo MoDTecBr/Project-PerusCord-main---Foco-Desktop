@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 3,
+  "packageId": "relay_client",
+  "appName": "Relay Client",
+  "version": "0.1.1",
+  "buildNumber": 2,
+  "platform": "windows",
+  "channel": "stable",
+  "artifact": {
+    "kind": "zip",
+    "url": "http://100.110.193.120:3000/releases/releases/0.1.1/windows/Relay%20Client-0.1.1-windows.zip",
+    "sha256": "21270a2a9b3e9701e759d32f4c52605f27e6a04bba222b65281186136d629368",
+    "length": 23195220
+  },
+  "install": {
+    "strategy": "wholeDirectoryReplace"
+  },
+  "signature": {
+    "algorithm": "ed25519",
+    "publicKeyId": "release-8498a354bb36c982fc25cafd",
+    "value": "vbFzPmMBA2ev0zf0Lfb6roop1yHJ46zUOIyQDoS/6cq6I8GWUtnULAq4seBm75l7UOQU0XBb0Kt1G3SG+6viAA=="
+  },
+  "minimumUpdaterVersion": "2.0.0",
+  "generatedAt": "2026-09-05T03:11:42.479958Z"
+}

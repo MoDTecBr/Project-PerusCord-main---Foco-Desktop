@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 3,
+  "appName": "Relay Client",
+  "items": [
+    {
+      "version": "0.1.1",
+      "buildNumber": 2,
+      "platform": "windows",
+      "channel": "stable",
+      "mandatory": false,
+      "release": "http://100.110.193.120:3000/releases/releases/0.1.1/windows/release.json"
+    },
+    {
+      "version": "0.1.10",
+      "buildNumber": 11,
+      "platform": "windows",
+      "channel": "stable",
+      "mandatory": false,
+      "release": "http://191.183.194.228:3000/releases/releases/0.1.10/windows/release.json"
+    },
+    {
+      "version": "0.1.2",
+      "buildNumber": 3,
+      "platform": "windows",
+      "channel": "stable",
+      "mandatory": false,
+      "release": "http://191.183.194.228:3000/releases/releases/0.1.2/windows/release.json"
+    },
+    {
+      "version": "0.1.3",
+      "buildNumber": 4,
+      "platform": "windows",
+      "channel": "stable",
+      "mandatory": false,
+      "release": "http://191.183.194.228:3000/releases/releases/0.1.3/windows/release.json"
+    },
+    {
+      "version": "0.1.4",
+      "buildNumber": 5,
+      "platform": "windows",
+      "channel": "stable",
+      "mandatory": false,
+      "release": "http://191.183.194.228:3000/releases/releases/0.1.4/windows/release.json"
+    },
+    {
+      "version": "0.1.5",
+      "buildNumber": 6,
+      "platform": "windows",
+      "channel": "stable",
+      "mandatory": false,
+      "release": "http://191.183.194.228:3000/releases/releases/0.1.5/windows/release.json"
+    },
+    {
+      "version": "0.1.6",
+      "buildNumber": 7,
+      "platform": "windows",
+      "channel": "stable",
+      "mandatory": false,
+      "release": "http://191.183.194.228:3000/releases/releases/0.1.6/windows/release.json"
+    },
+    {
+      "version": "0.1.7",
+      "buildNumber": 8,
+      "platform": "windows",
+      "channel": "stable",
+      "mandatory": false,
+      "release": "http://191.183.194.228:3000/releases/releases/0.1.7/windows/release.json"
+    },
+    {
+      "version": "0.1.8",
+      "buildNumber": 9,
+      "platform": "windows",
+      "channel": "stable",
+      "mandatory": false,
+      "release": "http://191.183.194.228:3000/releases/releases/0.1.8/windows/release.json"
+    },
+    {
+      "version": "0.1.9",
+      "buildNumber": 10,
+      "platform": "windows",
+      "channel": "stable",
+      "mandatory": false,
+      "release": "http://191.183.194.228:3000/releases/releases/0.1.9/windows/release.json"
+    }
+  ],
+  "signature": {
+    "algorithm": "ed25519",
+    "publicKeyId": "release-8498a354bb36c982fc25cafd",
+    "value": "KIeoJY6KrID9XC4COHED8y8p/Se3BFUZN/Loda10cIPZS479TIktjR59kuciDqxI4wyG4P1flkxYbsgahOe9CQ=="
+  }
+}
