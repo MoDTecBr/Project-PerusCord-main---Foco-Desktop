@@ -1,9 +1,13 @@
+import 'dart:io' show Platform;
+
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:livekit_client/livekit_client.dart';
 
 import '../../../core/theme/app_theme.dart';
 import '../application/voice_call_controller.dart';
+import '../domain/screen_share_quality.dart';
 import 'audio_device_picker.dart';
 import 'desktop_screen_picker.dart'; // <-- Import do nosso modal nativo
 
@@ -56,22 +60,58 @@ class VoiceCallBar extends ConsumerWidget {
               if (callState.screenShareEnabled) {
                 // Se já está compartilhando, desliga
                 controller.toggleScreenShare();
-              } else {
-                // Se NÃO está compartilhando, abre o modal nativo
-                final source = await showDialog<dynamic>(
-                  context: context,
-                  builder: (context) => const DesktopScreenPicker(),
-                );
-
-                // Se o usuário cancelou o modal, não faz nada
-                if (source == null) return;
-
-                // Se escolheu a tela, envia pro Controller ativar no LiveKit
-                controller.toggleScreenShare(source: source);
+                return;
               }
+              // Android/iOS não têm lista de janelas/telas pra escolher — o
+              // próprio SO mostra o diálogo de permissão de captura na hora.
+              // O `DesktopScreenPicker` usa uma API só de desktop e sempre
+              // vem vazio nessas plataformas.
+              final isDesktop =
+                  !kIsWeb && (Platform.isWindows || Platform.isMacOS || Platform.isLinux);
+              if (!isDesktop) {
+                controller.toggleScreenShare();
+                return;
+              }
+
+              // Se NÃO está compartilhando, abre o modal nativo
+              final source = await showDialog<dynamic>(
+                context: context,
+                builder: (context) => const DesktopScreenPicker(),
+              );
+
+              // Se o usuário cancelou o modal, não faz nada
+              if (source == null) return;
+
+              // Se escolheu a tela, envia pro Controller ativar no LiveKit
+              controller.toggleScreenShare(source: source);
             },
           ),
           // ----------------------------------------------------
+
+          PopupMenuButton<ScreenShareQuality>(
+            tooltip: 'Qualidade da tela compartilhada',
+            icon: Icon(Icons.tune, size: 20, color: relay.inkSoft),
+            initialValue: callState.screenShareQuality,
+            onSelected: controller.setScreenShareQuality,
+            itemBuilder: (context) => [
+              for (final quality in ScreenShareQuality.values)
+                PopupMenuItem(
+                  value: quality,
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(
+                      quality == callState.screenShareQuality
+                          ? Icons.radio_button_checked
+                          : Icons.radio_button_off,
+                      size: 18,
+                    ),
+                    title: Text(quality.label, style: const TextStyle(fontSize: 13)),
+                    subtitle: Text(quality.description, style: const TextStyle(fontSize: 11)),
+                  ),
+                ),
+            ],
+          ),
 
           IconButton(
             tooltip: callState.micEnabled ? 'Silenciar microfone' : 'Ativar microfone',

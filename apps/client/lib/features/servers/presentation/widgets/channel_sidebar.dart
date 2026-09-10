@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/network/api_exception.dart';
 import '../../../../core/theme/app_theme.dart';
+import '../../../../core/widgets/user_avatar.dart';
 import '../../application/server_detail_controller.dart';
 import '../../data/channels_repository.dart';
 import '../../data/invites_repository.dart';
@@ -372,19 +373,14 @@ class _ChannelTile extends StatelessWidget {
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                CircleAvatar(
-                                  radius: 8,
-                                  backgroundColor: relay.wire,
-                                  child: Text(
-                                    p.name.isNotEmpty ? p.name.substring(0, 1).toUpperCase() : '?',
-                                    style: TextStyle(
-                                      color: relay.background,
-                                      fontSize: 8,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                ),
+                                UserAvatar(displayName: p.name, avatarUrl: p.avatarUrl, radius: 8),
                                 const SizedBox(width: 6),
+                                Icon(
+                                  p.isMuted ? Icons.mic_off : Icons.mic,
+                                  size: 11,
+                                  color: p.isMuted ? relay.critical : relay.good,
+                                ),
+                                const SizedBox(width: 4),
                                 Flexible(
                                   child: Text(
                                     p.name,

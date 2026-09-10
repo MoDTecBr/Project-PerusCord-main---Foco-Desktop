@@ -1,20 +1,32 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:pasteboard/pasteboard.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/network/api_exception.dart';
 import '../../../core/realtime/realtime_events.dart';
 import '../../../core/realtime/realtime_providers.dart';
+import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/user_avatar.dart';
+import '../../profile/presentation/profile_card_dialog.dart';
 import '../../servers/domain/server_detail_models.dart';
+import '../../stickers/presentation/sticker_picker_dialog.dart';
 import '../application/messages_controller.dart';
 import '../application/typing_controller.dart';
 import '../data/uploads_repository.dart';
 import '../domain/message_models.dart';
+
+/// Reconhece URLs e menções "@usuario" no mesmo texto, na ordem em que
+/// aparecem — combinar os dois num regex só evita que um "consuma" o texto
+/// que o outro precisaria (ex: uma URL contendo "@" nunca deveria virar
+/// menção).
+final _linkAndMentionPattern = RegExp(r'(https?://[^\s]+)|(@[A-Za-z0-9_.]+)');
 
 const _extensionToMimeType = {
   'png': 'image/png',
@@ -25,15 +37,25 @@ const _extensionToMimeType = {
 };
 
 String _guessMimeType(String filename) {
-  final ext = filename.contains('.') ? filename.split('.').last.toLowerCase() : '';
+  final ext =
+      filename.contains('.') ? filename.split('.').last.toLowerCase() : '';
   return _extensionToMimeType[ext] ?? 'image/jpeg';
 }
 
 class ChannelScreen extends ConsumerStatefulWidget {
-  const ChannelScreen({super.key, required this.channel, required this.currentUserId});
+  const ChannelScreen({
+    super.key,
+    required this.channel,
+    required this.currentUserId,
+    this.members = const [],
+  });
 
   final RelayChannel channel;
   final String currentUserId;
+
+  /// Usado só pra sugestão/realce de menções "@usuario" — vazio em DMs (só
+  /// duas pessoas, menção não faz muito sentido ali).
+  final List<RelayMember> members;
 
   @override
   ConsumerState<ChannelScreen> createState() => _ChannelScreenState();
@@ -42,22 +64,41 @@ class ChannelScreen extends ConsumerStatefulWidget {
 class _ChannelScreenState extends ConsumerState<ChannelScreen> {
   final _inputController = TextEditingController();
   final _scrollController = ScrollController();
+  final _inputFocusNode = FocusNode();
   Timer? _stopTypingTimer;
   bool _isTyping = false;
   MessageAttachment? _pendingAttachment;
   bool _uploading = false;
   String? _uploadError;
+  List<RelayMember> _mentionSuggestions = const [];
 
   String get _channelId => widget.channel.id;
 
   @override
+  void initState() {
+    super.initState();
+    // `Focus.onKeyEvent`/`KeyboardListener` não funcionam aqui: o `TextField`
+    // já trata Ctrl+V internamente (colar texto) via `Shortcuts`/`Actions`
+    // própria, e isso consome o evento antes dele subir pra qualquer
+    // ancestral — nosso handler nunca era chamado. `HardwareKeyboard.
+    // addHandler` registra um observador global que recebe TODO evento de
+    // tecla independente do foco/consumo, então roda em paralelo sem
+    // interferir no comportamento de colar texto que já funcionava.
+    HardwareKeyboard.instance.addHandler(_handleGlobalKeyEvent);
+  }
+
+  @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleGlobalKeyEvent);
     _stopTypingTimer?.cancel();
     if (_isTyping) {
-      ref.read(realtimeClientProvider).emit(RealtimeEvent.typingStop, {'channelId': _channelId});
+      ref
+          .read(realtimeClientProvider)
+          .emit(RealtimeEvent.typingStop, {'channelId': _channelId});
     }
     _inputController.dispose();
     _scrollController.dispose();
+    _inputFocusNode.dispose();
     super.dispose();
   }
 
@@ -69,17 +110,84 @@ class _ChannelScreenState extends ConsumerState<ChannelScreen> {
         _isTyping = false;
         realtime.emit(RealtimeEvent.typingStop, {'channelId': _channelId});
       }
+    } else {
+      if (!_isTyping) {
+        _isTyping = true;
+        realtime.emit(RealtimeEvent.typingStart, {'channelId': _channelId});
+      }
+      _stopTypingTimer?.cancel();
+      _stopTypingTimer = Timer(const Duration(seconds: 3), () {
+        _isTyping = false;
+        realtime.emit(RealtimeEvent.typingStop, {'channelId': _channelId});
+      });
+    }
+    _updateMentionSuggestions();
+  }
+
+  /// Sugestões de menção aparecem quando o texto até o cursor termina em
+  /// "@algumacoisa" sem espaço — igual Discord/Slack.
+  void _updateMentionSuggestions() {
+    if (widget.members.isEmpty) return;
+    final selection = _inputController.selection;
+    if (!selection.isValid || selection.baseOffset < 0) {
+      if (_mentionSuggestions.isNotEmpty) {
+        setState(() => _mentionSuggestions = const []);
+      }
       return;
     }
-    if (!_isTyping) {
-      _isTyping = true;
-      realtime.emit(RealtimeEvent.typingStart, {'channelId': _channelId});
+    final beforeCursor =
+        _inputController.text.substring(0, selection.baseOffset);
+    final match = RegExp(r'@([A-Za-z0-9_.]*)$').firstMatch(beforeCursor);
+    if (match == null) {
+      if (_mentionSuggestions.isNotEmpty) {
+        setState(() => _mentionSuggestions = const []);
+      }
+      return;
     }
-    _stopTypingTimer?.cancel();
-    _stopTypingTimer = Timer(const Duration(seconds: 3), () {
-      _isTyping = false;
-      realtime.emit(RealtimeEvent.typingStop, {'channelId': _channelId});
-    });
+    final query = match.group(1)!.toLowerCase();
+    final matches = widget.members
+        .where((m) =>
+            m.username.toLowerCase().contains(query) ||
+            m.displayName.toLowerCase().contains(query))
+        .take(5)
+        .toList();
+    setState(() => _mentionSuggestions = matches);
+  }
+
+  void _selectMention(RelayMember member) {
+    final text = _inputController.text;
+    final selection = _inputController.selection;
+    final beforeCursor = text.substring(0, selection.baseOffset);
+    final match = RegExp(r'@([A-Za-z0-9_.]*)$').firstMatch(beforeCursor);
+    if (match == null) return;
+    final insertion = '@${member.username} ';
+    final newText =
+        text.replaceRange(match.start, selection.baseOffset, insertion);
+    final newOffset = match.start + insertion.length;
+    _inputController.value = TextEditingValue(
+      text: newText,
+      selection: TextSelection.collapsed(offset: newOffset),
+    );
+    setState(() => _mentionSuggestions = const []);
+  }
+
+  /// Ctrl+V com uma imagem na área de transferência (print de tela, copiar
+  /// imagem de outro app, etc.) sobe ela igual o botão de anexo — só quando
+  /// o campo de mensagem está focado. Sempre retorna `false` (não
+  /// "consome" o evento) pra nunca interferir em colar texto ou em
+  /// qualquer outro atalho do app.
+  bool _handleGlobalKeyEvent(KeyEvent event) {
+    final isPaste = event is KeyDownEvent &&
+        HardwareKeyboard.instance.isControlPressed &&
+        event.logicalKey == LogicalKeyboardKey.keyV;
+    if (!isPaste || !_inputFocusNode.hasFocus || _uploading) return false;
+
+    unawaited(() async {
+      final bytes = await Pasteboard.image;
+      if (bytes == null || !mounted) return;
+      await _uploadImageBytes(bytes, 'clipboard.png', 'image/png');
+    }());
+    return false;
   }
 
   Future<void> _editMessage(RelayMessage message) async {
@@ -88,9 +196,12 @@ class _ChannelScreenState extends ConsumerState<ChannelScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Editar mensagem'),
-        content: TextField(controller: controller, autofocus: true, maxLines: 4),
+        content:
+            TextField(controller: controller, autofocus: true, maxLines: 4),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')),
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancelar')),
           FilledButton(
             onPressed: () => Navigator.pop(context, controller.text.trim()),
             child: const Text('Salvar'),
@@ -98,8 +209,14 @@ class _ChannelScreenState extends ConsumerState<ChannelScreen> {
         ],
       ),
     );
-    if (newContent == null || newContent.isEmpty || newContent == message.content) return;
-    await ref.read(messagesControllerProvider(_channelId).notifier).editMessage(message.id, newContent);
+    if (newContent == null ||
+        newContent.isEmpty ||
+        newContent == message.content) {
+      return;
+    }
+    await ref
+        .read(messagesControllerProvider(_channelId).notifier)
+        .editMessage(message.id, newContent);
   }
 
   Future<void> _deleteMessage(RelayMessage message) async {
@@ -109,7 +226,9 @@ class _ChannelScreenState extends ConsumerState<ChannelScreen> {
         title: const Text('Apagar mensagem?'),
         content: const Text('Essa ação não pode ser desfeita.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancelar')),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
             child: const Text('Apagar'),
@@ -118,24 +237,43 @@ class _ChannelScreenState extends ConsumerState<ChannelScreen> {
       ),
     );
     if (confirmed != true) return;
-    await ref.read(messagesControllerProvider(_channelId).notifier).deleteMessage(message.id);
+    await ref
+        .read(messagesControllerProvider(_channelId).notifier)
+        .deleteMessage(message.id);
+  }
+
+  void _openStickerPicker() {
+    showDialog<void>(
+      context: context,
+      builder: (context) => StickerPickerDialog(
+        onSelect: (sticker) => setState(() {
+          _pendingAttachment = sticker.toAttachment();
+          _uploadError = null;
+        }),
+      ),
+    );
   }
 
   Future<void> _pickAndUploadImage() async {
-    final picked = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 90);
+    final picked = await ImagePicker()
+        .pickImage(source: ImageSource.gallery, imageQuality: 90);
     if (picked == null) return;
+    final bytes = await picked.readAsBytes();
+    final mimeType = picked.mimeType ?? _guessMimeType(picked.name);
+    await _uploadImageBytes(bytes, picked.name, mimeType);
+  }
 
+  Future<void> _uploadImageBytes(
+      Uint8List bytes, String filename, String mimeType) async {
     setState(() {
       _uploading = true;
       _uploadError = null;
     });
 
     try {
-      final bytes = await picked.readAsBytes();
-      final mimeType = picked.mimeType ?? _guessMimeType(picked.name);
       final attachment = await ref.read(uploadsRepositoryProvider).uploadImage(
             bytes: bytes,
-            filename: picked.name,
+            filename: filename,
             mimeType: mimeType,
           );
       if (!mounted) return;
@@ -169,7 +307,9 @@ class _ChannelScreenState extends ConsumerState<ChannelScreen> {
     _stopTypingTimer?.cancel();
     if (_isTyping) {
       _isTyping = false;
-      ref.read(realtimeClientProvider).emit(RealtimeEvent.typingStop, {'channelId': _channelId});
+      ref
+          .read(realtimeClientProvider)
+          .emit(RealtimeEvent.typingStop, {'channelId': _channelId});
     }
   }
 
@@ -183,12 +323,14 @@ class _ChannelScreenState extends ConsumerState<ChannelScreen> {
       children: [
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-          decoration: BoxDecoration(border: Border(bottom: BorderSide(color: relay.border))),
+          decoration: BoxDecoration(
+              border: Border(bottom: BorderSide(color: relay.border))),
           child: Row(
             children: [
               Icon(Icons.tag, size: 18, color: relay.inkFaint),
               const SizedBox(width: 6),
-              Text(widget.channel.name, style: Theme.of(context).textTheme.titleMedium),
+              Text(widget.channel.name,
+                  style: Theme.of(context).textTheme.titleMedium),
               if (widget.channel.topic != null) ...[
                 const SizedBox(width: 12),
                 Container(width: 1, height: 16, color: relay.border),
@@ -223,6 +365,7 @@ class _ChannelScreenState extends ConsumerState<ChannelScreen> {
                     return _MessageRow(
                       message: message,
                       isOwn: isOwn,
+                      members: widget.members,
                       onEdit: isOwn ? () => _editMessage(message) : null,
                       onDelete: isOwn ? () => _deleteMessage(message) : null,
                     );
@@ -233,14 +376,20 @@ class _ChannelScreenState extends ConsumerState<ChannelScreen> {
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 6),
             child: Text(
-              typingUsers.length == 1 ? 'Alguém está digitando…' : '${typingUsers.length} pessoas estão digitando…',
-              style: TextStyle(color: relay.inkFaint, fontSize: 12, fontStyle: FontStyle.italic),
+              typingUsers.length == 1
+                  ? 'Alguém está digitando…'
+                  : '${typingUsers.length} pessoas estão digitando…',
+              style: TextStyle(
+                  color: relay.inkFaint,
+                  fontSize: 12,
+                  fontStyle: FontStyle.italic),
             ),
           ),
         if (_uploadError != null)
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 0, 20, 6),
-            child: Text(_uploadError!, style: TextStyle(color: relay.critical, fontSize: 12)),
+            child: Text(_uploadError!,
+                style: TextStyle(color: relay.critical, fontSize: 12)),
           ),
         if (_pendingAttachment != null)
           Padding(
@@ -252,7 +401,8 @@ class _ChannelScreenState extends ConsumerState<ChannelScreen> {
                 children: [
                   ClipRRect(
                     borderRadius: BorderRadius.circular(8),
-                    child: Image.network(_pendingAttachment!.url, width: 72, height: 72, fit: BoxFit.cover),
+                    child: Image.network(_pendingAttachment!.url,
+                        width: 72, height: 72, fit: BoxFit.cover),
                   ),
                   Positioned(
                     top: -8,
@@ -260,11 +410,44 @@ class _ChannelScreenState extends ConsumerState<ChannelScreen> {
                     child: IconButton(
                       icon: const Icon(Icons.cancel, size: 18),
                       color: relay.inkFaint,
-                      onPressed: () => setState(() => _pendingAttachment = null),
+                      onPressed: () =>
+                          setState(() => _pendingAttachment = null),
                     ),
                   ),
                 ],
               ),
+            ),
+          ),
+        if (_mentionSuggestions.isNotEmpty)
+          Container(
+            margin: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+            constraints: const BoxConstraints(maxHeight: 180),
+            decoration: BoxDecoration(
+              color: relay.surfaceAlt,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: relay.border),
+            ),
+            child: ListView(
+              shrinkWrap: true,
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              children: [
+                for (final member in _mentionSuggestions)
+                  ListTile(
+                    dense: true,
+                    leading: UserAvatar(
+                      displayName: member.displayName,
+                      avatarUrl: member.avatarUrl,
+                      radius: 12,
+                      backgroundColor: relay.wire,
+                      foregroundColor: relay.background,
+                    ),
+                    title: Text(member.displayName,
+                        style: const TextStyle(fontSize: 13)),
+                    subtitle: Text('@${member.username}',
+                        style: TextStyle(fontSize: 11, color: relay.inkFaint)),
+                    onTap: () => _selectMention(member),
+                  ),
+              ],
             ),
           ),
         Padding(
@@ -281,14 +464,24 @@ class _ChannelScreenState extends ConsumerState<ChannelScreen> {
                       ? SizedBox(
                           width: 18,
                           height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: relay.wire),
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: relay.wire),
                         )
                       : Icon(Icons.image_outlined, color: relay.wire),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: IconButton(
+                  tooltip: 'Figurinhas',
+                  onPressed: _openStickerPicker,
+                  icon: Icon(Icons.emoji_emotions_outlined, color: relay.wire),
                 ),
               ),
               Expanded(
                 child: TextField(
                   controller: _inputController,
+                  focusNode: _inputFocusNode,
                   maxLength: 2000,
                   maxLengthEnforcement: MaxLengthEnforcement.enforced,
                   maxLines: 10,
@@ -312,7 +505,8 @@ class _ChannelScreenState extends ConsumerState<ChannelScreen> {
                         '$currentLength / $maxLength',
                         style: TextStyle(
                           fontSize: 11,
-                          fontWeight: isNearLimit ? FontWeight.bold : FontWeight.normal,
+                          fontWeight:
+                              isNearLimit ? FontWeight.bold : FontWeight.normal,
                           color: isNearLimit ? relay.critical : relay.inkFaint,
                         ),
                       ),
@@ -320,7 +514,8 @@ class _ChannelScreenState extends ConsumerState<ChannelScreen> {
                   },
                   decoration: InputDecoration(
                     hintText: 'Mensagem em #${widget.channel.name}',
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 10),
                   ),
                 ),
               ),
@@ -344,32 +539,93 @@ class _MessageRow extends StatelessWidget {
   const _MessageRow({
     required this.message,
     required this.isOwn,
+    this.members = const [],
     this.onEdit,
     this.onDelete,
   });
 
   final RelayMessage message;
   final bool isOwn;
+  final List<RelayMember> members;
   final VoidCallback? onEdit;
   final VoidCallback? onDelete;
+
+  /// Quebra o texto da mensagem em spans: texto normal, links clicáveis e
+  /// menções "@usuario" destacadas (só quando batem com um membro de
+  /// verdade — senão fica como texto comum, evita falso positivo tipo
+  /// e-mails ou "@" solto).
+  List<InlineSpan> _contentSpans(AppPalette relay) {
+    final content = message.content;
+    final spans = <InlineSpan>[];
+    var lastEnd = 0;
+    for (final match in _linkAndMentionPattern.allMatches(content)) {
+      if (match.start > lastEnd) {
+        spans.add(TextSpan(text: content.substring(lastEnd, match.start)));
+      }
+      final urlText = match.group(1);
+      final mentionText = match.group(2);
+      if (urlText != null) {
+        spans.add(
+          TextSpan(
+            text: urlText,
+            style: TextStyle(
+                color: relay.accent, decoration: TextDecoration.underline),
+            recognizer: TapGestureRecognizer()
+              ..onTap = () => _openLink(urlText),
+          ),
+        );
+      } else if (mentionText != null) {
+        final username = mentionText.substring(1);
+        final isRealMember = members
+            .any((m) => m.username.toLowerCase() == username.toLowerCase());
+        spans.add(
+          TextSpan(
+            text: mentionText,
+            style: isRealMember
+                ? TextStyle(
+                    color: relay.accent,
+                    fontWeight: FontWeight.w600,
+                    backgroundColor: relay.accent.withValues(alpha: 0.15),
+                  )
+                : null,
+          ),
+        );
+      }
+      lastEnd = match.end;
+    }
+    if (lastEnd < content.length) {
+      spans.add(TextSpan(text: content.substring(lastEnd)));
+    }
+    return spans;
+  }
+
+  Future<void> _openLink(String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return;
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
 
   @override
   Widget build(BuildContext context) {
     final relay = Theme.of(context).extension<RelayColors>()!.palette;
     final time = TimeOfDay.fromDateTime(message.createdAt.toLocal());
-    final timeLabel = '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
+    final timeLabel =
+        '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          UserAvatar(
-            displayName: message.author.displayName,
-            avatarUrl: message.author.avatarUrl,
-            radius: 17,
-            backgroundColor: isOwn ? relay.accent : relay.wire,
-            foregroundColor: isOwn ? relay.accentInk : relay.background,
+          GestureDetector(
+            onTap: () => showProfileCard(context, message.author.id),
+            child: UserAvatar(
+              displayName: message.author.displayName,
+              avatarUrl: message.author.avatarUrl,
+              radius: 17,
+              backgroundColor: isOwn ? relay.accent : relay.wire,
+              foregroundColor: isOwn ? relay.accentInk : relay.background,
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -378,19 +634,31 @@ class _MessageRow extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    Text(message.author.displayName,
-                        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5)),
+                    GestureDetector(
+                      onTap: () => showProfileCard(context, message.author.id),
+                      child: Text(message.author.displayName,
+                          style: const TextStyle(
+                              fontWeight: FontWeight.w700, fontSize: 13.5)),
+                    ),
                     const SizedBox(width: 8),
-                    Text(timeLabel, style: TextStyle(color: relay.inkFaint, fontSize: 11)),
+                    Text(timeLabel,
+                        style: TextStyle(color: relay.inkFaint, fontSize: 11)),
                     if (message.editedAt != null) ...[
                       const SizedBox(width: 6),
-                      Text('(editado)', style: TextStyle(color: relay.inkFaint, fontSize: 11)),
+                      Text('(editado)',
+                          style:
+                              TextStyle(color: relay.inkFaint, fontSize: 11)),
                     ],
                   ],
                 ),
                 if (message.content.isNotEmpty) ...[
                   const SizedBox(height: 2),
-                  Text(message.content, style: TextStyle(color: relay.ink, fontSize: 14)),
+                  Text.rich(
+                    TextSpan(
+                      style: TextStyle(color: relay.ink, fontSize: 14),
+                      children: _contentSpans(relay),
+                    ),
+                  ),
                 ],
                 if (message.attachments.isNotEmpty) ...[
                   const SizedBox(height: 6),
@@ -403,18 +671,21 @@ class _MessageRow extends StatelessWidget {
                           ClipRRect(
                             borderRadius: BorderRadius.circular(10),
                             child: GestureDetector(
-                              onTap: () => _openImagePreview(context, attachment.url),
+                              onTap: () =>
+                                  _openImagePreview(context, attachment.url),
                               child: Image.network(
                                 attachment.url,
                                 width: 240,
                                 height: 180,
                                 fit: BoxFit.cover,
-                                errorBuilder: (context, error, stack) => Container(
+                                errorBuilder: (context, error, stack) =>
+                                    Container(
                                   width: 240,
                                   height: 180,
                                   color: relay.surfaceAlt,
                                   alignment: Alignment.center,
-                                  child: Icon(Icons.broken_image_outlined, color: relay.inkFaint),
+                                  child: Icon(Icons.broken_image_outlined,
+                                      color: relay.inkFaint),
                                 ),
                               ),
                             ),
@@ -430,10 +701,13 @@ class _MessageRow extends StatelessWidget {
           if (onEdit != null || onDelete != null)
             PopupMenuButton<String>(
               icon: Icon(Icons.more_horiz, size: 18, color: relay.inkFaint),
-              onSelected: (value) => value == 'edit' ? onEdit?.call() : onDelete?.call(),
+              onSelected: (value) =>
+                  value == 'edit' ? onEdit?.call() : onDelete?.call(),
               itemBuilder: (context) => [
-                if (onEdit != null) const PopupMenuItem(value: 'edit', child: Text('Editar')),
-                if (onDelete != null) const PopupMenuItem(value: 'delete', child: Text('Apagar')),
+                if (onEdit != null)
+                  const PopupMenuItem(value: 'edit', child: Text('Editar')),
+                if (onDelete != null)
+                  const PopupMenuItem(value: 'delete', child: Text('Apagar')),
               ],
             ),
         ],
@@ -473,9 +747,11 @@ class _FileChip extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.insert_drive_file_outlined, size: 16, color: relay.inkFaint),
+          Icon(Icons.insert_drive_file_outlined,
+              size: 16, color: relay.inkFaint),
           const SizedBox(width: 6),
-          Text(attachment.filename, style: TextStyle(color: relay.inkSoft, fontSize: 12.5)),
+          Text(attachment.filename,
+              style: TextStyle(color: relay.inkSoft, fontSize: 12.5)),
         ],
       ),
     );

@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "profileId": "ab9f546aa244478f69bc23e603b0353c",
+  "feedUrl": "http://191.183.194.228:3000/releases/app-archive.json",
+  "activeKeyId": "release-8498a354bb36c982fc25cafd",
+  "publicKeys": {
+    "release-8498a354bb36c982fc25cafd": "Yy4R+pLDdwhv1jm2/2VrBKQFmqT5jfgateQXGwfeOp8="
+  }
+}

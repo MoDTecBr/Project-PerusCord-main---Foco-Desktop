@@ -1,10 +1,10 @@
 name: relay_client
 description: Relay — cliente nativo (Android, iOS, Windows, macOS) de comunicação em tempo real.
 publish_to: "none"
-version: 0.1.0+1
+version: 0.1.10+11
 
 environment:
-  sdk: ">=3.4.0 <4.0.0"
+  sdk: ">=3.6.0 <4.0.0"
 
 dependencies:
   flutter:
@@ -29,15 +29,43 @@ dependencies:
 
   # Enviar imagens no chat
   image_picker: ^1.1.2
+  # Abrir hyperlinks do chat no navegador padrão
+  url_launcher: ^6.3.1
+  # Colar imagem da área de transferência direto no chat (Ctrl+V) — o
+  # `Clipboard` padrão do Flutter só lê texto, não dá pra ler imagem.
+  pasteboard: ^0.3.0
 
   cupertino_icons: ^1.0.8
   launch_at_startup: ^0.0.1
   package_info_plus: ^10.2.1
+
+  # Auto-update do app desktop (Windows) — ver apps/client/desktop_updater.yaml
+  desktop_updater: ^3.1.6
+  path_provider: ^2.1.4
+
+  # Android 10+ exige um foreground service do tipo `mediaProjection` já
+  # rodando antes de iniciar a captura de tela (senão o SO recusa em
+  # silêncio) — este pacote fornece esse serviço pronto, mesma abordagem do
+  # app de exemplo oficial do livekit_client.
+  flutter_background: ^1.3.0
+
+  # Som de notificação quando alguém entra na chamada de voz
+  audioplayers: ^6.1.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
 
+# socket_io_client 2.x declara `js: ^0.6.3`, mas o app não roda em web nesse
+# fluxo (auto-update é só Windows) e ambas as faixas de `js` expõem a mesma
+# API de anotações usada pelos dois pacotes — força uma versão só pra
+# resolver o conflito de versão sem ter que subir socket_io_client pra 3.x
+# (mudança maior, fora do escopo desta tarefa).
+dependency_overrides:
+  js: ^0.7.1
+
 flutter:
   uses-material-design: true
+  assets:
+    - assets/sounds/

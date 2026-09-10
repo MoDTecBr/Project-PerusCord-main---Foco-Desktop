@@ -19,7 +19,12 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
-DefaultDirName={autopf}\{#MyAppName}
+; Instalação por usuário (não em Program Files): necessário para o
+; auto-update (pacote desktop_updater, modo "direct zip") substituir os
+; arquivos sozinho sem pedir UAC a cada atualização — é assim que o Discord
+; também instala (%LOCALAPPDATA%\Discord).
+DefaultDirName={localappdata}\{#MyAppName}
+PrivilegesRequired=lowest
 UninstallDisplayIcon={app}\{#MyAppExeName}
 ; "ArchitecturesAllowed=x64compatible" specifies that Setup cannot run
 ; on anything but x64 and Windows 11 on Arm.
@@ -30,8 +35,6 @@ ArchitecturesAllowed=x64compatible
 ; the 64-bit view of the registry.
 ArchitecturesInstallIn64BitMode=x64compatible
 DisableProgramGroupPage=yes
-; Uncomment the following line to run in non administrative install mode (install for current user only).
-;PrivilegesRequired=lowest
 OutputBaseFilename=Relay_Setup
 SetupIconFile=C:\Users\walla\Downloads\favicon.ico
 SolidCompression=yes

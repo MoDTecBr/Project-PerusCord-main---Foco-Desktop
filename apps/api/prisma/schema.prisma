@@ -64,6 +64,9 @@ model User {
   displayName  String
   passwordHash String
   avatarUrl    String?
+  bannerUrl    String?
+  bio          String? // "sobre mim" livre, exibido no card de perfil
+  customStatus String? // frase curta ao lado do nome, separada do status online/ausente
   status       PresenceStatus @default(OFFLINE)
 
   mfaEnabled    Boolean  @default(false)
@@ -82,6 +85,7 @@ model User {
   dmChannels    DMParticipant[]
   friendshipsSent     Friendship[] @relation("FriendshipRequester")
   friendshipsReceived Friendship[] @relation("FriendshipAddressee")
+  stickers            Sticker[]
 
   @@index([username])
 }
@@ -326,4 +330,20 @@ model AuditLog {
 
   @@index([serverId])
   @@index([actorId])
+}
+
+/// Figurinha própria de um usuário (não por servidor) — reaproveita o mesmo
+/// arquivo já hospedado no MinIO via /uploads; esse registro só guarda a
+/// referência pra poder listar/escolher de novo sem re-upload.
+model Sticker {
+  id        String   @id @default(cuid())
+  ownerId   String
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name      String?
+  url       String
+  mimeType  String
+  size      Int
+  createdAt DateTime @default(now())
+
+  @@index([ownerId])
 }

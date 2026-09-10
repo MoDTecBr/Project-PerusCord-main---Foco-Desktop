@@ -126,13 +126,22 @@ class AuthController extends Notifier<AuthState> {
 
   /// Salva nome de exibição e/ou avatar do usuário logado e atualiza o
   /// estado local com o resultado retornado pela API.
-  Future<void> updateProfile({String? displayName, String? avatarUrl}) async {
+  Future<void> updateProfile({
+    String? displayName,
+    String? avatarUrl,
+    String? bannerUrl,
+    String? bio,
+    String? customStatus,
+  }) async {
     final accessToken = _tokenHolder.current;
     if (accessToken == null) return;
     final user = await _repo.updateProfile(
       accessToken: accessToken,
       displayName: displayName,
       avatarUrl: avatarUrl,
+      bannerUrl: bannerUrl,
+      bio: bio,
+      customStatus: customStatus,
     );
     state = AuthAuthenticated(user);
   }

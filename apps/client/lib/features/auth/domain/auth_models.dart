@@ -21,6 +21,9 @@ class CurrentUser {
     required this.avatarUrl,
     required this.status,
     required this.mfaEnabled,
+    this.bannerUrl,
+    this.bio,
+    this.customStatus,
   });
 
   final String id;
@@ -30,6 +33,9 @@ class CurrentUser {
   final String? avatarUrl;
   final String status;
   final bool mfaEnabled;
+  final String? bannerUrl;
+  final String? bio;
+  final String? customStatus;
 
   factory CurrentUser.fromJson(Map<String, dynamic> json) => CurrentUser(
         id: json['id'] as String,
@@ -39,5 +45,8 @@ class CurrentUser {
         avatarUrl: json['avatarUrl'] as String?,
         status: json['status'] as String? ?? 'OFFLINE',
         mfaEnabled: json['mfaEnabled'] as bool? ?? false,
+        bannerUrl: json['bannerUrl'] as String?,
+        bio: json['bio'] as String?,
+        customStatus: json['customStatus'] as String?,
       );
 }

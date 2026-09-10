@@ -8,6 +8,7 @@ import {
 import { FriendshipStatus } from '@prisma/client';
 import { RealtimeEvent } from '@relay/shared-types';
 import { PrismaService } from '../prisma/prisma.service';
+import { PresenceService } from '../realtime/presence.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { SendFriendRequestDto } from './dto/send-friend-request.dto';
 
@@ -20,6 +21,7 @@ export class FriendsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeGateway,
+    private readonly presence: PresenceService,
   ) {}
 
   async sendRequest(requesterId: string, dto: SendFriendRequestDto) {
@@ -119,7 +121,16 @@ export class FriendsService {
       },
       include: { requester: PUBLIC_SELECT, addressee: PUBLIC_SELECT },
     });
-    return rows.map((r) => (r.requesterId === userId ? r.addressee : r.requester));
+    const friends = rows.map((r) => (r.requesterId === userId ? r.addressee : r.requester));
+    // O `status` do Postgres é só a última troca manual (ausente/não
+    // perturbe) e fica travado em OFFLINE pra quem nunca mexeu nisso — o
+    // status real (online agora ou não) vem do Redis via PresenceService.
+    return Promise.all(
+      friends.map(async (friend) => ({
+        ...friend,
+        status: await this.presence.effectiveStatus(friend.id, friend.status),
+      })),
+    );
   }
 
   async listPending(userId: string) {

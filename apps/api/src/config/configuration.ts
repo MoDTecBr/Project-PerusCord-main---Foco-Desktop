@@ -1,3 +1,5 @@
+import { join } from 'path';
+
 export interface AppConfig {
   env: string;
   port: number;
@@ -33,6 +35,9 @@ export interface AppConfig {
     accessKey: string;
     secretKey: string;
     bucket: string;
+  };
+  releases: {
+    dir: string;
   };
 }
 
@@ -84,5 +89,11 @@ export default (): AppConfig => ({
     accessKey: process.env.S3_ACCESS_KEY ?? 'relay',
     secretKey: process.env.S3_SECRET_KEY ?? 'relay_dev_password',
     bucket: process.env.S3_BUCKET ?? 'relay-uploads',
+  },
+  releases: {
+    // Onde ficam os arquivos publicados pelo `dart run desktop_updater:release
+    // publish` (app-archive.json, release.json e o .zip de cada versão) —
+    // servidos publicamente em GET /releases/* (ver ReleasesController).
+    dir: process.env.RELEASES_DIR ?? join(process.cwd(), 'releases'),
   },
 });

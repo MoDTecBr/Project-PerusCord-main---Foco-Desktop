@@ -7,7 +7,12 @@
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-    
+    <!-- Compartilhamento de tela: Android 10+ exige um foreground service do
+         tipo mediaProjection rodando antes de iniciar a captura, senão o SO
+         recusa em silêncio (ver flutter_background em voice_call_controller.dart). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+
     <application
         android:label="relay_client"
         android:name="${applicationName}"
@@ -36,6 +41,12 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <service
+            android:name="de.julianassmann.flutter_background.IsolateHolderService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
     </application>
     
     <queries>

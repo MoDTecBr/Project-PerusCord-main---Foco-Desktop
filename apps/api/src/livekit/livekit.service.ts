@@ -16,7 +16,11 @@ export interface VoiceTokenResult {
 export interface VoicePresenceParticipant {
   identity: string;
   name: string;
+  avatarUrl: string | null;
   isSharingScreen: boolean;
+  /** Sem track de microfone publicado conta como mudo também — nos dois
+   * casos a pessoa não está transmitindo áudio. */
+  isMuted: boolean;
   /** Timestamp (ms desde epoch) de quando a pessoa entrou na call. */
   joinedAtMs: number;
 }
@@ -107,28 +111,48 @@ export class LivekitService {
       where: { serverId, type: { in: [ChannelType.VOICE, ChannelType.VIDEO] } },
     });
 
-    const entries = await Promise.all(
-      channels.map(async (channel): Promise<[string, VoicePresenceParticipant[]]> => {
+    const rawEntries = await Promise.all(
+      channels.map(async (channel) => {
         try {
           const participants = await this.roomService.listParticipants(channel.id);
-          return [
-            channel.id,
-            participants.map((p) => ({
-              identity: p.identity,
-              name: p.name,
-              isSharingScreen: p.tracks.some(
-                (t) => t.source === TrackSource.SCREEN_SHARE && !t.muted,
-              ),
-              joinedAtMs: Number(p.joinedAtMs),
-            })),
-          ];
+          return [channel.id, participants] as const;
         } catch (error) {
           // Sala nunca foi criada (ninguém entrou ainda) — comportamento normal, não loga como erro.
           this.logger.debug(`Sem sala ativa para o canal ${channel.id}: ${error}`);
-          return [channel.id, []];
+          return [channel.id, []] as const;
         }
       }),
     );
+
+    // O LiveKit não sabe nada sobre avatar/perfil — só o identity (=userId).
+    // Busca todo mundo que apareceu em qualquer sala de uma vez só, em vez
+    // de uma query por participante.
+    const allIdentities = Array.from(
+      new Set(rawEntries.flatMap(([, participants]) => participants.map((p) => p.identity))),
+    );
+    const users = allIdentities.length
+      ? await this.prisma.user.findMany({
+          where: { id: { in: allIdentities } },
+          select: { id: true, avatarUrl: true },
+        })
+      : [];
+    const avatarByUserId = new Map(users.map((u) => [u.id, u.avatarUrl]));
+
+    const entries = rawEntries.map(([channelId, participants]) => [
+      channelId,
+      participants.map(
+        (p): VoicePresenceParticipant => ({
+          identity: p.identity,
+          name: p.name,
+          avatarUrl: avatarByUserId.get(p.identity) ?? null,
+          isSharingScreen: p.tracks.some(
+            (t) => t.source === TrackSource.SCREEN_SHARE && !t.muted,
+          ),
+          isMuted: !p.tracks.some((t) => t.source === TrackSource.MICROPHONE && !t.muted),
+          joinedAtMs: Number(p.joinedAtMs),
+        }),
+      ),
+    ]);
 
     return Object.fromEntries(entries);
   }

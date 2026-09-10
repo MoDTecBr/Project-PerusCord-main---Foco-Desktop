@@ -12,14 +12,31 @@ class AudioDevicePrefs {
   static const _micKey = 'relay.audio.micDeviceId';
   static const _outputKey = 'relay.audio.outputDeviceId';
   static const _videoCodecKey = 'relay.video.codec';
+  static const _screenShareQualityKey = 'relay.screenshare.quality';
+  static const _echoCancellationKey = 'relay.audio.echoCancellation';
+  static const _noiseSuppressionKey = 'relay.audio.noiseSuppression';
+  static const _micGainKey = 'relay.audio.micGain';
 
   Future<void> saveMic(String deviceId) => _safeWrite(_micKey, deviceId);
   Future<void> saveOutput(String deviceId) => _safeWrite(_outputKey, deviceId);
   Future<void> saveVideoCodec(String codec) => _safeWrite(_videoCodecKey, codec);
+  Future<void> saveScreenShareQuality(String quality) =>
+      _safeWrite(_screenShareQualityKey, quality);
+  Future<void> saveEchoCancellation(bool value) => _safeWriteBool(_echoCancellationKey, value);
+  Future<void> saveNoiseSuppression(bool value) => _safeWriteBool(_noiseSuppressionKey, value);
+  Future<void> saveMicGain(double value) => _safeWrite(_micGainKey, value.toString());
 
   Future<String?> readMic() => _safeRead(_micKey);
   Future<String?> readOutput() => _safeRead(_outputKey);
   Future<String?> readVideoCodec() => _safeRead(_videoCodecKey);
+  Future<String?> readScreenShareQuality() => _safeRead(_screenShareQualityKey);
+  Future<bool> readEchoCancellation() => _safeReadBool(_echoCancellationKey);
+  Future<bool> readNoiseSuppression() => _safeReadBool(_noiseSuppressionKey);
+
+  Future<double> readMicGain() async {
+    final raw = await _safeRead(_micGainKey);
+    return raw == null ? 1.0 : double.tryParse(raw) ?? 1.0;
+  }
 
   Future<void> _safeWrite(String key, String value) async {
     try {
@@ -37,4 +54,8 @@ class AudioDevicePrefs {
       return null;
     }
   }
+
+  Future<void> _safeWriteBool(String key, bool value) => _safeWrite(key, value ? '1' : '0');
+
+  Future<bool> _safeReadBool(String key) async => (await _safeRead(key)) == '1';
 }

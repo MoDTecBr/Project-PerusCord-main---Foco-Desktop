@@ -24,6 +24,6 @@
   "allowScripts": {
     "argon2@0.41.1": true,
     "prisma@5.22.0": true,
-    "electron@33.4.11": true
+    "electron@43.4.1": true
   }
 }

@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -10,12 +10,22 @@ import '../../features/home/presentation/home_screen.dart';
 
 const _publicRoutes = ['/login', '/register'];
 
+/// Chave do Navigator raiz do GoRouter — usada para exibir diálogos globais
+/// (ex: update disponível) com um `BuildContext` que realmente enxerga o
+/// Navigator. O `context` recebido pelo `builder` de `MaterialApp.router` é
+/// IRMÃO do Router (não descendente), então `showDialog` com aquele context
+/// falha com "Null check operator used on a null value" dentro de
+/// `Navigator.of` — foi exatamente isso que quebrava o diálogo de auto-update
+/// silenciosamente (o erro só aparece no console, o app segue rodando normal).
+final rootNavigatorKey = GlobalKey<NavigatorState>();
+
 final goRouterProvider = Provider<GoRouter>((ref) {
   final authListenable = ValueNotifier<AuthState>(ref.read(authControllerProvider));
   ref.listen(authControllerProvider, (_, next) => authListenable.value = next);
   ref.onDispose(authListenable.dispose);
 
   return GoRouter(
+    navigatorKey: rootNavigatorKey,
     initialLocation: '/splash',
     refreshListenable: authListenable,
     redirect: (context, state) {

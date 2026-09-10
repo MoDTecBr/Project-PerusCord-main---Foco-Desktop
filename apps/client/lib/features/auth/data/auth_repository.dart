@@ -91,6 +91,9 @@ class AuthRepository {
     required String accessToken,
     String? displayName,
     String? avatarUrl,
+    String? bannerUrl,
+    String? bio,
+    String? customStatus,
   }) async {
     try {
       final res = await _dio.patch<Map<String, dynamic>>(
@@ -98,6 +101,9 @@ class AuthRepository {
         data: {
           if (displayName != null) 'displayName': displayName,
           if (avatarUrl != null) 'avatarUrl': avatarUrl,
+          if (bannerUrl != null) 'bannerUrl': bannerUrl,
+          if (bio != null) 'bio': bio,
+          if (customStatus != null) 'customStatus': customStatus,
         },
         options: Options(headers: {'Authorization': 'Bearer $accessToken'}),
       );

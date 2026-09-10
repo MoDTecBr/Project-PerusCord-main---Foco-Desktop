@@ -11,11 +11,16 @@ class Env {
 
   static const String apiBaseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'http://100.110.193.120:3000',
+    defaultValue: 'http://191.183.194.228:3000',
   );
 
   static const String wsBaseUrl = String.fromEnvironment(
     'WS_BASE_URL',
     defaultValue: apiBaseUrl,
   );
+
+  /// Onde o auto-update (pacote `desktop_updater`) busca o índice assinado
+  /// de releases — servido pela própria API (ver apps/api/src/releases).
+  /// Precisa bater com `updates.baseUrl` em `desktop_updater.yaml`.
+  static const String updateArchiveUrl = '$apiBaseUrl/releases/app-archive.json';
 }

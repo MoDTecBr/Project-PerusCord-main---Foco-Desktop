@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/widgets/user_avatar.dart';
+import '../../../profile/presentation/profile_card_dialog.dart';
 import '../../domain/server_detail_models.dart';
 
 /// Aba fixa à direita listando quem está no servidor — online primeiro,
@@ -63,39 +64,43 @@ class _MemberTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final relay = Theme.of(context).extension<RelayColors>()!.palette;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 10),
-      child: Opacity(
-        opacity: member.isOnline ? 1 : 0.5,
-        child: Row(
-          children: [
-            Stack(
-              children: [
-                UserAvatar(displayName: member.displayName, avatarUrl: member.avatarUrl, radius: 14),
-                Positioned(
-                  right: 0,
-                  bottom: 0,
-                  child: Container(
-                    width: 9,
-                    height: 9,
-                    decoration: BoxDecoration(
-                      color: member.isOnline ? relay.good : relay.inkFaint,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: relay.surfaceAlt, width: 2),
+    return InkWell(
+      borderRadius: BorderRadius.circular(6),
+      onTap: () => showProfileCard(context, member.userId),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 10),
+        child: Opacity(
+          opacity: member.isOnline ? 1 : 0.5,
+          child: Row(
+            children: [
+              Stack(
+                children: [
+                  UserAvatar(displayName: member.displayName, avatarUrl: member.avatarUrl, radius: 14),
+                  Positioned(
+                    right: 0,
+                    bottom: 0,
+                    child: Container(
+                      width: 9,
+                      height: 9,
+                      decoration: BoxDecoration(
+                        color: member.isOnline ? relay.good : relay.inkFaint,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: relay.surfaceAlt, width: 2),
+                      ),
                     ),
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                member.displayName,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(color: relay.inkSoft, fontSize: 13.5),
+                ],
               ),
-            ),
-          ],
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  member.displayName,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: relay.inkSoft, fontSize: 13.5),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

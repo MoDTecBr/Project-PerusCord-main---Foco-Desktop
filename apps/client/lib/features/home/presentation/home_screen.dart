@@ -220,12 +220,11 @@ class _TopBar extends ConsumerWidget {
             icon: Icon(Icons.settings, color: relay.inkFaint, size: 20),
             tooltip: 'Configurações de Usuário',
             onPressed: () {
+              final currentUser = user;
+              if (currentUser == null) return;
               showDialog(
                 context: context,
-                builder: (context) => UserProfileDialog(
-                  currentDisplayName: user?.displayName ?? 'Usuário',
-                  currentAvatarUrl: user?.avatarUrl,
-                ),
+                builder: (context) => UserProfileDialog(currentUser: currentUser),
               );
             },
           ),
@@ -372,10 +371,12 @@ class _ServerBodyState extends ConsumerState<_ServerBody> {
                           key: ValueKey(selected.id),
                           channel: selected,
                           currentUserId: widget.currentUserId,
+                          members: server.members,
                         )
                       : VoiceChannelScreen(
                           key: ValueKey(selected.id),
                           channel: selected,
+                          members: server.members,
                         ),
             ),
             if (!widget.isMobile) ...[

@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { ChannelType, FriendshipStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { PresenceService } from '../realtime/presence.service';
 
 const PARTICIPANT_SELECT = {
   select: { id: true, username: true, displayName: true, avatarUrl: true, status: true },
@@ -8,7 +9,10 @@ const PARTICIPANT_SELECT = {
 
 @Injectable()
 export class DmService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly presence: PresenceService,
+  ) {}
 
   /** Retorna o canal de DM com este amigo, criando-o na primeira vez. */
   async getOrCreateWithFriend(userId: string, username: string) {
@@ -69,10 +73,18 @@ export class DmService {
       orderBy: { createdAt: 'desc' },
     });
 
-    return channels.map((c) => ({
-      id: c.id,
-      createdAt: c.createdAt,
-      participant: c.dmParticipants[0]?.user ?? null,
-    }));
+    return Promise.all(
+      channels.map(async (c) => {
+        const participant = c.dmParticipants[0]?.user ?? null;
+        return {
+          id: c.id,
+          createdAt: c.createdAt,
+          participant: participant && {
+            ...participant,
+            status: await this.presence.effectiveStatus(participant.id, participant.status),
+          },
+        };
+      }),
+    );
   }
 }

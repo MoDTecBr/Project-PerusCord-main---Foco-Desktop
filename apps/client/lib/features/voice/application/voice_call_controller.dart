@@ -1,9 +1,14 @@
+import 'dart:io' show Platform;
+
+import 'package:flutter_background/flutter_background.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart' show Helper;
 import 'package:livekit_client/livekit_client.dart' as lk;
 import '../../../core/network/api_exception.dart';
 import '../../servers/domain/server_detail_models.dart';
 import '../data/audio_device_prefs.dart';
 import '../data/voice_repository.dart';
+import '../domain/audio_filter_settings.dart';
 import '../domain/screen_share_quality.dart';
 import '../domain/video_codec_preference.dart';
 import 'package:flutter/foundation.dart';
@@ -30,6 +35,7 @@ class VoiceCallConnected extends VoiceCallState {
     this.screenShareEnabled = false,
     this.screenShareQuality = ScreenShareQuality.defaultQuality,
     this.videoCodec = VideoCodecPreference.defaultPreference,
+    this.audioFilters = AudioFilterSettings.defaultSettings,
     this.deafened = false,
   });
 
@@ -40,6 +46,7 @@ class VoiceCallConnected extends VoiceCallState {
   final bool screenShareEnabled;
   final ScreenShareQuality screenShareQuality;
   final VideoCodecPreference videoCodec;
+  final AudioFilterSettings audioFilters;
   final bool deafened;
 
   VoiceCallConnected copyWith({
@@ -48,6 +55,7 @@ class VoiceCallConnected extends VoiceCallState {
     bool? screenShareEnabled,
     ScreenShareQuality? screenShareQuality,
     VideoCodecPreference? videoCodec,
+    AudioFilterSettings? audioFilters,
     bool? deafened,
   }) =>
       VoiceCallConnected(
@@ -58,6 +66,7 @@ class VoiceCallConnected extends VoiceCallState {
         screenShareEnabled: screenShareEnabled ?? this.screenShareEnabled,
         screenShareQuality: screenShareQuality ?? this.screenShareQuality,
         videoCodec: videoCodec ?? this.videoCodec,
+        audioFilters: audioFilters ?? this.audioFilters,
         deafened: deafened ?? this.deafened,
       );
 }
@@ -100,14 +109,28 @@ class VoiceCallController extends Notifier<VoiceCallState> {
       final preferredCodec = VideoCodecPreference.fromWireValue(
         await _devicePrefs.readVideoCodec(),
       );
+      final preferredQuality = ScreenShareQuality.fromStorageKey(
+        await _devicePrefs.readScreenShareQuality(),
+      );
 
-      // Mantém os filtros de captura desligados (decisão anterior do time:
-      // echo cancellation/noise suppression/AGC agressivos cortavam a voz).
+      // Os filtros de captura (eco/ruído) vêm desligados por padrão —
+      // decisão anterior do time: versões agressivas desses filtros já
+      // cortaram a voz no meio da fala. Quem quiser tentar liga manualmente
+      // no diálogo de dispositivos de áudio (AudioDevicePicker). O ganho
+      // automático do WebRTC foi substituído por um multiplicador manual
+      // (`micGain`, aplicado via Helper.setVolume mais abaixo) — o AGC
+      // automático travava o controle de volume de um jeito que nem
+      // desligar o filtro depois resolvia.
+      final audioFilters = AudioFilterSettings(
+        echoCancellation: await _devicePrefs.readEchoCancellation(),
+        noiseSuppression: await _devicePrefs.readNoiseSuppression(),
+        micGain: await _devicePrefs.readMicGain(),
+      );
       final room = lk.Room(
         roomOptions: lk.RoomOptions(
-          defaultAudioCaptureOptions: const lk.AudioCaptureOptions(
-            echoCancellation: false,
-            noiseSuppression: false,
+          defaultAudioCaptureOptions: lk.AudioCaptureOptions(
+            echoCancellation: audioFilters.echoCancellation,
+            noiseSuppression: audioFilters.noiseSuppression,
             autoGainControl: false,
           ),
           defaultVideoPublishOptions: lk.VideoPublishOptions(
@@ -144,11 +167,14 @@ class VoiceCallController extends Notifier<VoiceCallState> {
       }
 
       await room.localParticipant?.setMicrophoneEnabled(true);
+      await _applyMicGain(room.localParticipant, audioFilters.micGain);
 
       state = VoiceCallConnected(
         channel: channel,
         room: room,
         videoCodec: preferredCodec,
+        screenShareQuality: preferredQuality,
+        audioFilters: audioFilters,
       );
     } on ApiException catch (e) {
       state = VoiceCallError(e.message);
@@ -203,6 +229,11 @@ class VoiceCallController extends Notifier<VoiceCallState> {
       state = const VoiceCallIdle();
       return;
     }
+    // Sair sem desligar antes deixa a notificação persistente do foreground
+    // service presa (ver toggleScreenShare) mesmo sem ninguém transmitindo.
+    if (Platform.isAndroid && current.screenShareEnabled) {
+      await FlutterBackground.disableBackgroundExecution();
+    }
     state = const VoiceCallIdle();
     await current.room.disconnect();
     await current.room.dispose();
@@ -215,6 +246,9 @@ class VoiceCallController extends Notifier<VoiceCallState> {
     if (localParticipant == null) return;
     final next = !current.micEnabled;
     await localParticipant.setMicrophoneEnabled(next);
+    // Reativar o mic pode publicar um track nativo novo — reaplica o ganho
+    // guardado pra não voltar silenciosamente pro volume original (1.0).
+    if (next) await _applyMicGain(localParticipant, current.audioFilters.micGain);
     state = current.copyWith(micEnabled: next);
   }
 
@@ -265,6 +299,21 @@ class VoiceCallController extends Notifier<VoiceCallState> {
     if (localParticipant == null) return;
 
     final next = !current.screenShareEnabled;
+
+    // Android 10+ recusa a captura de tela em silêncio se não houver um
+    // foreground service do tipo mediaProjection já rodando — precisa estar
+    // ativo ANTES de pedir a captura, e ser desligado ao encerrar (senão a
+    // notificação persistente do serviço fica presa mesmo sem transmitir).
+    if (Platform.isAndroid) {
+      if (next) {
+        if (!await FlutterBackground.hasPermissions) {
+          await FlutterBackground.initialize();
+        }
+        await FlutterBackground.enableBackgroundExecution();
+      } else {
+        await FlutterBackground.disableBackgroundExecution();
+      }
+    }
 
     if (next) {
       var options = current.screenShareQuality.toCaptureOptions();
@@ -321,6 +370,7 @@ class VoiceCallController extends Notifier<VoiceCallState> {
   Future<void> setScreenShareQuality(ScreenShareQuality quality) async {
     final current = state;
     if (current is! VoiceCallConnected) return;
+    await _devicePrefs.saveScreenShareQuality(quality.storageKey);
     state = current.copyWith(screenShareQuality: quality);
 
     if (current.screenShareEnabled) {
@@ -331,5 +381,46 @@ class VoiceCallController extends Notifier<VoiceCallState> {
         screenShareCaptureOptions: quality.toCaptureOptions(),
       );
     }
+  }
+
+  /// Liga/desliga os filtros de captura de microfone (eco/ruído). Diferente
+  /// da troca de dispositivo, isso muda como o track de áudio é CRIADO — não
+  /// dá pra aplicar num publish já existente sem reconectar (a API
+  /// experimental do LiveKit pra trocar isso ao vivo não tem implementação
+  /// nativa para Windows/Linux ainda), então reconecta rapidamente igual já
+  /// acontece na troca de CODEC de vídeo. O ganho do microfone (`micGain`)
+  /// NÃO passa por aqui — ver `setMicGain`, que aplica na hora sem reconectar.
+  Future<void> setAudioFilters(AudioFilterSettings filters) async {
+    final current = state;
+    if (current is! VoiceCallConnected) return;
+
+    await Future.wait([
+      _devicePrefs.saveEchoCancellation(filters.echoCancellation),
+      _devicePrefs.saveNoiseSuppression(filters.noiseSuppression),
+    ]);
+    await join(current.channel, force: true);
+  }
+
+  /// Ajusta o ganho do microfone (multiplicador manual, 1.0 = original) via
+  /// `Helper.setVolume` no próprio track local — a mesma API nativa já usada
+  /// pro volume de participantes remotos. Diferente do AGC automático do
+  /// WebRTC (que travava o controle de volume da call inteira, sem se
+  /// recuperar nem desligando o filtro depois), isso aplica na hora, sem
+  /// reconectar, e não mexe em nenhum processamento automático do WebRTC.
+  Future<void> setMicGain(double gain) async {
+    final current = state;
+    if (current is! VoiceCallConnected) return;
+
+    await _devicePrefs.saveMicGain(gain);
+    await _applyMicGain(current.room.localParticipant, gain);
+    state = current.copyWith(audioFilters: current.audioFilters.copyWith(micGain: gain));
+  }
+
+  Future<void> _applyMicGain(lk.LocalParticipant? localParticipant, double gain) async {
+    final micTrack = localParticipant
+        ?.getTrackPublicationBySource(lk.TrackSource.microphone)
+        ?.track;
+    if (micTrack == null) return;
+    await Helper.setVolume(gain, micTrack.mediaStreamTrack);
   }
 }

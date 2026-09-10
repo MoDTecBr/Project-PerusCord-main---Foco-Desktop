@@ -1,0 +1,25 @@
+# Configuração do pacote `desktop_updater` (auto-update do app desktop).
+# baseUrl precisa bater com Env.updateArchiveUrl em lib/core/config/env.dart
+# (sem o /app-archive.json final). Os arquivos publicados por
+# `dart run desktop_updater:release publish` vão para apps/api/releases/,
+# servidos pela API nesse mesmo caminho.
+updates:
+  baseUrl: http://191.183.194.228:3000/releases
+
+# Modo "Inno installer" (script próprio) em vez do zip direto — o caminho de
+# zip (`wholeDirectoryReplace`) tem um bug confirmado no helper nativo do
+# Windows 3.1.6 (tenta ler um `desktop_updater_helper_policy.json` que só
+# existe no modo Inno, mesmo update sendo zip, e falha em vez de cair no
+# caminho "portable"). O modo `generated` do próprio pacote resolveria isso,
+# mas fixa `DefaultDirName={autopf}` (Program Files) sem alternativa —
+# incompatível com nosso requisito de instalar em %LOCALAPPDATA% sem UAC
+# (nível Discord). `mode: script` usa nosso .iss de sempre (já testado,
+# lowest privilege, localappdata) só trocando o artifact.kind pra
+# innoInstaller, que evita o bug do modo zip.
+windows:
+  installer:
+    kind: inno
+    mode: script
+    script: windows/installer/relay_client.iss
+    outputBaseName: RelaySetup
+    isccPath: C:\Users\Dudu\AppData\Local\Programs\InnoSetup6\ISCC.exe

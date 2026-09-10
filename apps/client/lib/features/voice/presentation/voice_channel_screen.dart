@@ -1,8 +1,14 @@
+import 'dart:async';
+import 'dart:io' show Platform;
+
+import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
 import 'package:livekit_client/livekit_client.dart' as lk;
 
+import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../servers/domain/server_detail_models.dart';
 import '../application/voice_call_controller.dart';
@@ -42,9 +48,10 @@ extension _ParticipantVideo on lk.Participant {
 /// (`voiceCallControllerProvider`). A conexão em si não é dona desta tela:
 /// trocar de canal/tela não desconecta a chamada, só o botão "sair" faz isso.
 class VoiceChannelScreen extends ConsumerWidget {
-  const VoiceChannelScreen({super.key, required this.channel});
+  const VoiceChannelScreen({super.key, required this.channel, required this.members});
 
   final RelayChannel channel;
+  final List<RelayMember> members;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -52,7 +59,7 @@ class VoiceChannelScreen extends ConsumerWidget {
     final controller = ref.read(voiceCallControllerProvider.notifier);
 
     if (callState is VoiceCallConnected && callState.channel.id == channel.id) {
-      return _InCallView(state: callState, controller: controller);
+      return _InCallView(state: callState, controller: controller, members: members);
     }
 
     final connecting =
@@ -135,10 +142,11 @@ class _JoinPrompt extends StatelessWidget {
 }
 
 class _InCallView extends StatefulWidget {
-  const _InCallView({required this.state, required this.controller});
+  const _InCallView({required this.state, required this.controller, required this.members});
 
   final VoiceCallConnected state;
   final VoiceCallController controller;
+  final List<RelayMember> members;
 
   @override
   State<_InCallView> createState() => _InCallViewState();
@@ -147,6 +155,36 @@ class _InCallView extends StatefulWidget {
 class _InCallViewState extends State<_InCallView> {
   bool _theaterMode = false;
   String? _featuredIdentity;
+
+  /// Toca um som quando alguém novo entra na chamada. Comparamos contra a
+  /// lista de identidades já vistas em vez de escutar `RoomEvent` direto do
+  /// LiveKit porque essa tela já recalcula `participants` a cada notificação
+  /// do `room` (ver `AnimatedBuilder` no `build`) — só falta notar a
+  /// diferença. `null` até o primeiro build pra não tocar som pros
+  /// participantes que já estavam na call quando esta tela abriu.
+  Set<String>? _knownParticipantIdentities;
+  final _joinSoundPlayer = AudioPlayer();
+
+  void _playJoinSoundForNewParticipants(List<lk.Participant> participants) {
+    final identities = participants.map((p) => p.identity).toSet();
+    final known = _knownParticipantIdentities;
+    _knownParticipantIdentities = identities;
+    if (known == null) return;
+    final hasNewcomer = identities.difference(known).any(
+          (identity) => participants
+              .firstWhere((p) => p.identity == identity)
+              is! lk.LocalParticipant,
+        );
+    if (hasNewcomer) {
+      unawaited(_joinSoundPlayer.play(AssetSource('sounds/voice_join.wav')));
+    }
+  }
+
+  @override
+  void dispose() {
+    _joinSoundPlayer.dispose();
+    super.dispose();
+  }
 
   /// Volume (0.0–2.0, 1.0 = 100%) escolhido localmente para cada participante
   /// remoto — só afeta o que este cliente ouve, nunca é enviado a mais ninguém.
@@ -180,6 +218,35 @@ class _InCallViewState extends State<_InCallView> {
     rtc.Helper.setVolume(volume, mediaTrack);
   }
 
+  /// Mesmo padrão do volume do microfone acima, mas pro áudio de tela
+  /// compartilhada (áudio de sistema/jogo de quem está transmitindo) — só
+  /// existia mudo/não-mudo antes, sem controle de nível.
+  final Map<String, double> _screenAudioVolumeByIdentity = {};
+  final Map<String, rtc.MediaStreamTrack> _screenAudioVolumeAppliedToTrack = {};
+
+  double _screenAudioVolumeFor(lk.Participant participant) =>
+      _screenAudioVolumeByIdentity[participant.identity] ?? 1.0;
+
+  void _setScreenAudioVolume(lk.Participant participant, double volume) {
+    setState(() => _screenAudioVolumeByIdentity[participant.identity] = volume);
+    _applyStoredScreenAudioVolume(participant);
+  }
+
+  void _applyStoredScreenAudioVolume(lk.Participant participant) {
+    final volume = _screenAudioVolumeByIdentity[participant.identity];
+    if (volume == null) return;
+    final screenAudioTrack = participant
+        .getTrackPublicationBySource(lk.TrackSource.screenShareAudio)
+        ?.track;
+    if (screenAudioTrack == null) return;
+    final mediaTrack = screenAudioTrack.mediaStreamTrack;
+    if (identical(_screenAudioVolumeAppliedToTrack[participant.identity], mediaTrack)) {
+      return;
+    }
+    _screenAudioVolumeAppliedToTrack[participant.identity] = mediaTrack;
+    rtc.Helper.setVolume(volume, mediaTrack);
+  }
+
   /// Faixas já silenciadas por causa do "ensurdecer" — evita reescrever
   /// `.enabled` a cada rebuild, e pega quem entra/republica áudio (ex:
   /// alguém que estava sem mic ligou o mic) enquanto o modo está ativo.
@@ -204,14 +271,14 @@ class _InCallViewState extends State<_InCallView> {
     }
   }
 
-  /// Quem optou por não assistir a transmissão de tela de determinada
-  /// pessoa — cancela a inscrição no vídeo **e** no áudio da tela (não
-  /// só esconde o preview). Assim quem não quer ver também deixa de
-  /// ouvir o som da transmissão, e o cliente poupa banda/CPU nos dois.
-  final Set<String> _hiddenScreenShares = {};
+  /// Quem o usuário optou por assistir explicitamente — o padrão é "ninguém"
+  /// (opt-in): uma transmissão de tela nova NÃO inscreve vídeo/áudio
+  /// automaticamente, só mostra um botão "Assistir"; a pessoa vendo poupa
+  /// banda/CPU até decidir clicar.
+  final Set<String> _watchingScreenShares = {};
 
   bool _isWatchingScreenShare(lk.Participant participant) =>
-      !_hiddenScreenShares.contains(participant.identity);
+      _watchingScreenShares.contains(participant.identity);
 
   Future<void> _setRemoteSourceSubscribed(
     lk.Participant participant,
@@ -241,30 +308,33 @@ class _InCallViewState extends State<_InCallView> {
     ]);
   }
 
-  /// Se a pessoa republicar o áudio da tela depois de alguém já ter
-  /// optado por não assistir, cancela a inscrição nessa faixa nova
-  /// (o mesmo padrão do ensurdecer).
-  void _enforceHiddenScreenShares(lk.Participant participant) {
+  /// Mantém a inscrição de vídeo/áudio da tela sincronizada com quem está
+  /// em `_watchingScreenShares` — cobre tanto uma transmissão nova aparecendo
+  /// (fica desinscrita até alguém clicar em "Assistir") quanto a pessoa
+  /// republicar a faixa depois de já ter sido marcada como "assistindo".
+  void _enforceScreenShareSubscriptions(lk.Participant participant) {
     if (participant is lk.LocalParticipant) return;
-    if (_isWatchingScreenShare(participant)) return;
-    _setScreenShareWatching(participant, watching: false);
+    _setScreenShareWatching(participant, watching: _isWatchingScreenShare(participant));
   }
 
   Future<void> _toggleWatchScreenShare(lk.Participant participant) async {
-    final hiding = _isWatchingScreenShare(participant);
+    final wasWatching = _isWatchingScreenShare(participant);
     setState(() {
-      if (hiding) {
-        _hiddenScreenShares.add(participant.identity);
+      if (wasWatching) {
+        _watchingScreenShares.remove(participant.identity);
       } else {
-        _hiddenScreenShares.remove(participant.identity);
+        _watchingScreenShares.add(participant.identity);
       }
     });
-    await _setScreenShareWatching(participant, watching: !hiding);
+    await _setScreenShareWatching(participant, watching: !wasWatching);
   }
 
   @override
   Widget build(BuildContext context) {
     final room = widget.state.room;
+    final avatarByIdentity = {
+      for (final member in widget.members) member.userId: member.avatarUrl,
+    };
     return AnimatedBuilder(
       animation: room,
       builder: (context, _) {
@@ -272,10 +342,12 @@ class _InCallViewState extends State<_InCallView> {
           if (room.localParticipant != null) room.localParticipant!,
           ...room.remoteParticipants.values,
         ];
+        _playJoinSoundForNewParticipants(participants);
         for (final participant in participants) {
           _applyStoredVolume(participant);
+          _applyStoredScreenAudioVolume(participant);
           _enforceDeafen(participant);
-          _enforceHiddenScreenShares(participant);
+          _enforceScreenShareSubscriptions(participant);
         }
         final screenSharers =
             participants.where((p) => p.isSharingScreen).toList();
@@ -305,10 +377,13 @@ class _InCallViewState extends State<_InCallView> {
                       ? _TheaterView(
                           featured: featured,
                           participants: participants,
+                          avatarByIdentity: avatarByIdentity,
                           onSelectFeatured: (identity) =>
                               setState(() => _featuredIdentity = identity),
                           volumeFor: _volumeFor,
                           onVolumeChanged: _setVolume,
+                          screenAudioVolumeFor: _screenAudioVolumeFor,
+                          onScreenAudioVolumeChanged: _setScreenAudioVolume,
                           watchingScreenShareFor: _isWatchingScreenShare,
                           onToggleWatchScreenShare: _toggleWatchScreenShare,
                         )
@@ -324,9 +399,13 @@ class _InCallViewState extends State<_InCallView> {
                           itemCount: participants.length,
                           itemBuilder: (context, index) => _ParticipantTile(
                               participant: participants[index],
+                              avatarUrl: avatarByIdentity[participants[index].identity],
                               volume: _volumeFor(participants[index]),
                               onVolumeChanged: (v) =>
                                   _setVolume(participants[index], v),
+                              screenAudioVolume: _screenAudioVolumeFor(participants[index]),
+                              onScreenAudioVolumeChanged: (v) =>
+                                  _setScreenAudioVolume(participants[index], v),
                               watchingScreenShare:
                                   _isWatchingScreenShare(participants[index]),
                               onToggleWatchScreenShare: () =>
@@ -346,14 +425,25 @@ class _InCallViewState extends State<_InCallView> {
               onToggleScreenShare: () async {
                 if (widget.state.screenShareEnabled) {
                   widget.controller.toggleScreenShare();
-                } else {
-                  final source = await showDialog<dynamic>(
-                    context: context,
-                    builder: (context) => const DesktopScreenPicker(),
-                  );
-                  if (source == null) return;
-                  widget.controller.toggleScreenShare(source: source);
+                  return;
                 }
+                // Android/iOS não têm lista de janelas/telas pra escolher —
+                // o próprio SO mostra o diálogo de permissão de captura na
+                // hora. O `DesktopScreenPicker` usa uma API só de desktop e
+                // sempre vem vazio nessas plataformas.
+                final isDesktop = !kIsWeb &&
+                    (Platform.isWindows || Platform.isMacOS || Platform.isLinux);
+                if (!isDesktop) {
+                  widget.controller.toggleScreenShare();
+                  return;
+                }
+
+                final source = await showDialog<dynamic>(
+                  context: context,
+                  builder: (context) => const DesktopScreenPicker(),
+                );
+                if (source == null) return;
+                widget.controller.toggleScreenShare(source: source);
               },
               onSelectScreenShareQuality:
                   widget.controller.setScreenShareQuality,
@@ -470,18 +560,24 @@ class _TheaterView extends StatelessWidget {
   const _TheaterView({
     required this.featured,
     required this.participants,
+    required this.avatarByIdentity,
     required this.onSelectFeatured,
     required this.volumeFor,
     required this.onVolumeChanged,
+    required this.screenAudioVolumeFor,
+    required this.onScreenAudioVolumeChanged,
     required this.watchingScreenShareFor,
     required this.onToggleWatchScreenShare,
   });
 
   final lk.Participant featured;
   final List<lk.Participant> participants;
+  final Map<String, String?> avatarByIdentity;
   final ValueChanged<String> onSelectFeatured;
   final double Function(lk.Participant) volumeFor;
   final void Function(lk.Participant, double) onVolumeChanged;
+  final double Function(lk.Participant) screenAudioVolumeFor;
+  final void Function(lk.Participant, double) onScreenAudioVolumeChanged;
   final bool Function(lk.Participant) watchingScreenShareFor;
   final void Function(lk.Participant) onToggleWatchScreenShare;
 
@@ -496,9 +592,12 @@ class _TheaterView extends StatelessWidget {
           Expanded(
             child: _ParticipantTile(
               participant: featured,
+              avatarUrl: avatarByIdentity[featured.identity],
               preferScreenShare: true,
               volume: volumeFor(featured),
               onVolumeChanged: (v) => onVolumeChanged(featured, v),
+              screenAudioVolume: screenAudioVolumeFor(featured),
+              onScreenAudioVolumeChanged: (v) => onScreenAudioVolumeChanged(featured, v),
               watchingScreenShare: watchingScreenShareFor(featured),
               onToggleWatchScreenShare: () =>
                   onToggleWatchScreenShare(featured),
@@ -521,8 +620,12 @@ class _TheaterView extends StatelessWidget {
                       onTap: () => onSelectFeatured(participant.identity),
                       child: _ParticipantTile(
                         participant: participant,
+                        avatarUrl: avatarByIdentity[participant.identity],
                         volume: volumeFor(participant),
                         onVolumeChanged: (v) => onVolumeChanged(participant, v),
+                        screenAudioVolume: screenAudioVolumeFor(participant),
+                        onScreenAudioVolumeChanged: (v) =>
+                            onScreenAudioVolumeChanged(participant, v),
                         watchingScreenShare:
                             watchingScreenShareFor(participant),
                         onToggleWatchScreenShare: () =>
@@ -709,17 +812,23 @@ class _CallControls extends StatelessWidget {
 class _ParticipantTile extends StatelessWidget {
   const _ParticipantTile({
     required this.participant,
+    this.avatarUrl,
     this.preferScreenShare = true,
     this.volume = 1.0,
     this.onVolumeChanged,
+    this.screenAudioVolume = 1.0,
+    this.onScreenAudioVolumeChanged,
     this.watchingScreenShare = true,
     this.onToggleWatchScreenShare,
   });
 
   final lk.Participant participant;
+  final String? avatarUrl;
   final bool preferScreenShare;
   final double volume;
   final ValueChanged<double>? onVolumeChanged;
+  final double screenAudioVolume;
+  final ValueChanged<double>? onScreenAudioVolumeChanged;
   final bool watchingScreenShare;
   final VoidCallback? onToggleWatchScreenShare;
 
@@ -752,6 +861,8 @@ class _ParticipantTile extends StatelessWidget {
         participant: participant,
         initialVolume: volume,
         onVolumeChanged: onVolumeChanged,
+        initialScreenAudioVolume: screenAudioVolume,
+        onScreenAudioVolumeChanged: onScreenAudioVolumeChanged,
       ),
     );
   }
@@ -890,19 +1001,7 @@ class _ParticipantTile extends StatelessWidget {
               ),
             )
           else
-            Center(
-              child: CircleAvatar(
-                radius: 28,
-                backgroundColor: relay.wire,
-                child: Text(
-                  label.isNotEmpty ? label.substring(0, 1).toUpperCase() : '?',
-                  style: TextStyle(
-                      color: relay.background,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 20),
-                ),
-              ),
-            ),
+            Center(child: _AvatarOrInitial(avatarUrl: avatarUrl, label: label, relay: relay)),
           if (sharingScreen)
             Positioned(
               right: isLocal ? 8 : 72,
@@ -1000,16 +1099,62 @@ class _ParticipantTile extends StatelessWidget {
   }
 }
 
+/// Mostra a foto de perfil do participante quando houver uma; cai para um
+/// círculo com a inicial do nome quando não há avatar ou a imagem falha ao
+/// carregar (ex: MinIO temporariamente inacessível).
+class _AvatarOrInitial extends StatelessWidget {
+  const _AvatarOrInitial({
+    required this.avatarUrl,
+    required this.label,
+    required this.relay,
+  });
+
+  final String? avatarUrl;
+  final String label;
+  final AppPalette relay;
+
+  @override
+  Widget build(BuildContext context) {
+    final initial = label.isNotEmpty ? label.substring(0, 1).toUpperCase() : '?';
+    final fallback = CircleAvatar(
+      radius: 28,
+      backgroundColor: relay.wire,
+      child: Text(
+        initial,
+        style: TextStyle(
+            color: relay.background, fontWeight: FontWeight.w700, fontSize: 20),
+      ),
+    );
+
+    final url = avatarUrl;
+    if (url == null || url.isEmpty) return fallback;
+
+    return ClipOval(
+      child: Image.network(
+        url,
+        width: 56,
+        height: 56,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) => fallback,
+      ),
+    );
+  }
+}
+
 class _ParticipantAudioDialog extends StatefulWidget {
   const _ParticipantAudioDialog({
     required this.participant,
     this.initialVolume = 1.0,
     this.onVolumeChanged,
+    this.initialScreenAudioVolume = 1.0,
+    this.onScreenAudioVolumeChanged,
   });
 
   final lk.Participant participant;
   final double initialVolume;
   final ValueChanged<double>? onVolumeChanged;
+  final double initialScreenAudioVolume;
+  final ValueChanged<double>? onScreenAudioVolumeChanged;
 
   @override
   State<_ParticipantAudioDialog> createState() =>
@@ -1018,6 +1163,7 @@ class _ParticipantAudioDialog extends StatefulWidget {
 
 class _ParticipantAudioDialogState extends State<_ParticipantAudioDialog> {
   late double _volume = widget.initialVolume;
+  late double _screenAudioVolume = widget.initialScreenAudioVolume;
 
   void _toggleMute(lk.TrackSource source, bool muted) {
     final track = widget.participant.getTrackPublicationBySource(source)?.track;
@@ -1034,6 +1180,17 @@ class _ParticipantAudioDialogState extends State<_ParticipantAudioDialog> {
       rtc.Helper.setVolume(volume, micTrack.mediaStreamTrack);
     }
     widget.onVolumeChanged?.call(volume);
+  }
+
+  void _setScreenAudioVolume(double volume) {
+    setState(() => _screenAudioVolume = volume);
+    final screenAudioTrack = widget.participant
+        .getTrackPublicationBySource(lk.TrackSource.screenShareAudio)
+        ?.track;
+    if (screenAudioTrack != null) {
+      rtc.Helper.setVolume(volume, screenAudioTrack.mediaStreamTrack);
+    }
+    widget.onScreenAudioVolumeChanged?.call(volume);
   }
 
   @override
@@ -1113,14 +1270,53 @@ class _ParticipantAudioDialogState extends State<_ParticipantAudioDialog> {
                           _toggleMute(lk.TrackSource.microphone, muted),
                   activeThumbColor: relay.accent,
                 ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Text('VOLUME DA TRANSMISSÃO',
+                        style: TextStyle(
+                            color: relay.inkFaint,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold)),
+                    const Spacer(),
+                    Text('${(_screenAudioVolume * 100).round()}%',
+                        style: TextStyle(
+                            color: relay.inkSoft,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600)),
+                  ],
+                ),
+                Row(
+                  children: [
+                    Icon(Icons.volume_down, size: 18, color: relay.inkFaint),
+                    Expanded(
+                      child: Slider(
+                        value: _screenAudioVolume.clamp(0.0, 2.0),
+                        min: 0.0,
+                        max: 2.0,
+                        divisions: 40,
+                        activeColor: relay.accent,
+                        onChanged: screenAudioTrack == null ? null : _setScreenAudioVolume,
+                      ),
+                    ),
+                    Icon(Icons.volume_up, size: 18, color: relay.inkFaint),
+                  ],
+                ),
+                Text(
+                  screenAudioTrack == null
+                      ? 'Esta pessoa não está compartilhando áudio da tela no momento.'
+                      : 'Volume do som da tela compartilhada — só afeta o que você ouve.',
+                  style: TextStyle(color: relay.inkFaint, fontSize: 11),
+                ),
+                const SizedBox(height: 8),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('Silenciar áudio da transmissão',
                       style: TextStyle(fontSize: 13)),
                   subtitle: Text(
                     screenAudioTrack == null
-                        ? 'Esta pessoa não está compartilhando áudio da tela'
-                        : 'Só você deixará de ouvir o som da tela compartilhada',
+                        ? 'Sem transmissão de tela no momento'
+                        : 'Silencia rápido sem perder o nível de volume escolhido',
                     style: TextStyle(color: relay.inkFaint, fontSize: 11),
                   ),
                   value: screenAudioTrack != null &&

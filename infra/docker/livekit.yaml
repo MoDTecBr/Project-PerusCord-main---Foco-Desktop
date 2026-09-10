@@ -11,7 +11,7 @@ rtc:
   # anunciaria o IP interno do container nos candidatos ICE, que ninguém de
   # fora consegue alcançar. Tem que ser um IP onde o host desta máquina é
   # alcançável por quem vai entrar na chamada — aqui, o IP do Radmin VPN.
-  node_ip: 100.110.193.120
+  node_ip: 191.183.194.228
 
 # Detecção de "quem está falando" (aro verde no cliente) — o padrão do
 # LiveKit exige falar bem mais alto/por mais tempo do que a gente quer aqui.

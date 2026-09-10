@@ -34,8 +34,13 @@ final AutoDisposeProvider<void> _friendsRealtimeBinderProvider = Provider.autoDi
 
   realtime.on(RealtimeEvent.friendRequestCreate, handler);
   realtime.on(RealtimeEvent.friendRequestUpdate, handler);
+  // Amigo ficou online/offline — a lista de amigos mostra o pontinho de
+  // status, então também precisa recarregar (o REST já devolve o status
+  // certo, calculado via Redis; só falta buscar de novo).
+  realtime.on(RealtimeEvent.presenceUpdate, handler);
   ref.onDispose(() {
     realtime.off(RealtimeEvent.friendRequestCreate, handler);
     realtime.off(RealtimeEvent.friendRequestUpdate, handler);
+    realtime.off(RealtimeEvent.presenceUpdate, handler);
   });
 });

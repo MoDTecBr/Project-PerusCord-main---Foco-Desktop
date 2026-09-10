@@ -7,6 +7,7 @@ import '../../../core/widgets/user_avatar.dart';
 import '../../dm/application/dm_controller.dart';
 import '../../dm/data/dm_repository.dart';
 import '../../messages/presentation/channel_screen.dart';
+import '../../profile/presentation/profile_card_dialog.dart';
 import '../../servers/domain/server_detail_models.dart';
 import '../application/friends_controller.dart';
 import '../data/friends_repository.dart';
@@ -253,24 +254,27 @@ class _FriendTile extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 8),
       child: ListTile(
         onTap: onTap,
-        leading: Stack(
-          children: [
-            UserAvatar(displayName: friend.displayName, avatarUrl: friend.avatarUrl),
-            if (online)
-              Positioned(
-                right: 0,
-                bottom: 0,
-                child: Container(
-                  width: 10,
-                  height: 10,
-                  decoration: BoxDecoration(
-                    color: relay.good,
-                    shape: BoxShape.circle,
-                    border: Border.all(color: relay.surface, width: 2),
+        leading: GestureDetector(
+          onTap: () => showProfileCard(context, friend.id),
+          child: Stack(
+            children: [
+              UserAvatar(displayName: friend.displayName, avatarUrl: friend.avatarUrl),
+              if (online)
+                Positioned(
+                  right: 0,
+                  bottom: 0,
+                  child: Container(
+                    width: 10,
+                    height: 10,
+                    decoration: BoxDecoration(
+                      color: relay.good,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: relay.surface, width: 2),
+                    ),
                   ),
                 ),
-              ),
-          ],
+            ],
+          ),
         ),
         title: Text(friend.displayName),
         subtitle: Text('@${friend.username}'),

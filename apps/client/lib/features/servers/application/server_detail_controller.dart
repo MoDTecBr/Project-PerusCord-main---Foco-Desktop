@@ -29,10 +29,18 @@ final serverDetailProvider =
   for (final event in structureEvents) {
     realtime.on(event, handleStructureChange);
   }
+
+  // Um membro ficou online/offline — o payload não carrega `serverId` (o
+  // backend só emite pra quem já importa: membros do mesmo servidor), então
+  // qualquer evento recebido aqui já é relevante pra este servidor.
+  void handlePresenceChange(dynamic _) => ref.invalidateSelf();
+  realtime.on(RealtimeEvent.presenceUpdate, handlePresenceChange);
+
   ref.onDispose(() {
     for (final event in structureEvents) {
       realtime.off(event, handleStructureChange);
     }
+    realtime.off(RealtimeEvent.presenceUpdate, handlePresenceChange);
   });
 
   return repo.getDetail(serverId);

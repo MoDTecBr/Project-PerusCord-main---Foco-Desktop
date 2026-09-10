@@ -1,8 +1,9 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { AuditLogAction, ChannelType, Prisma } from '@prisma/client';
+import { AuditLogAction, ChannelType, Prisma, PresenceStatus } from '@prisma/client';
 import { ALL_PERMISSIONS, DEFAULT_EVERYONE_PERMISSIONS } from '@relay/permissions';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { PresenceService } from '../realtime/presence.service';
 import { RealtimeGateway } from '../realtime/realtime.gateway';
 import { CreateServerDto } from './dto/create-server.dto';
 import { UpdateServerDto } from './dto/update-server.dto';
@@ -25,7 +26,26 @@ export class ServersService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly realtime: RealtimeGateway,
+    private readonly presence: PresenceService,
   ) {}
+
+  /** O `status` do include vem cru do Postgres (só a última troca manual,
+   * travado em OFFLINE por padrão) — troca pelo status real calculado via
+   * Redis (`PresenceService`) antes de devolver pro cliente. */
+  private async withLiveMemberStatus<
+    T extends { members: { user: { id: string; status: PresenceStatus } }[] },
+  >(server: T): Promise<T> {
+    server.members = await Promise.all(
+      server.members.map(async (member) => ({
+        ...member,
+        user: {
+          ...member.user,
+          status: await this.presence.effectiveStatus(member.user.id, member.user.status),
+        },
+      })),
+    );
+    return server;
+  }
 
   /**
    * Cria o servidor com sua estrutura mínima viável: cargo @everyone, o dono
@@ -92,7 +112,7 @@ export class ServersService {
       // servidor) — sem isso, ele só passaria a receber eventos do servidor
       // na próxima reconexão.
       await this.realtime.joinUserToServerRoom(ownerId, server.id);
-      return server;
+      return this.withLiveMemberStatus(server);
     });
   }
 
@@ -105,10 +125,11 @@ export class ServersService {
 
   async getDetail(serverId: string, userId: string) {
     await this.assertMember(serverId, userId);
-    return this.prisma.server.findUniqueOrThrow({
+    const server = await this.prisma.server.findUniqueOrThrow({
       where: { id: serverId },
       include: SERVER_DETAIL_INCLUDE,
     });
+    return this.withLiveMemberStatus(server);
   }
 
   async update(serverId: string, actorId: string, dto: UpdateServerDto) {

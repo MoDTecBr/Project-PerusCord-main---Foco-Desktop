@@ -36,6 +36,13 @@ Thumbs.db
 # Docker volumes (local dev data)
 infra/docker/.data/
 
+# Arquivos publicados pelo desktop_updater (auto-update do app desktop) —
+# grandes demais e regeneráveis via `dart run desktop_updater:release publish`
+apps/api/releases/
+
+# Chave privada de assinatura de release do desktop_updater — NUNCA commitar
+*.dukey
+
 # Flutter / Dart (apps/client)
 apps/client/.dart_tool/
 apps/client/.flutter-plugins

@@ -20,6 +20,8 @@ import { FriendsModule } from './friends/friends.module';
 import { DmModule } from './dm/dm.module';
 import { LivekitModule } from './livekit/livekit.module';
 import { UploadsModule } from './uploads/uploads.module';
+import { StickersModule } from './stickers/stickers.module';
+import { ReleasesModule } from './releases/releases.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 
@@ -49,6 +51,8 @@ import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
     DmModule,
     LivekitModule,
     UploadsModule,
+    StickersModule,
+    ReleasesModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },

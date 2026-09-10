@@ -3,12 +3,16 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
+  audioplayers_windows
   connectivity_plus
+  desktop_updater
   file_selector_windows
   flutter_secure_storage_windows
   flutter_webrtc
   launch_at_startup
   livekit_client
+  pasteboard
+  url_launcher_windows
 )
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST
